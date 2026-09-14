@@ -1,4 +1,4 @@
-import { Route, Routes } from "react-router-dom";
+import { Route, Routes, Navigate } from "react-router-dom";
 import "./App.css";
 import { supabase } from "./lib/supabaseClient";
 
@@ -15,88 +15,43 @@ import Profile from "./pages/Profile";
 import Settings from "./pages/Settings";
 import Notifications from "./pages/Notifications";
 import Community from "./pages/Community";
+import OnlineUsers from "./pages/OnlineUsers";
+import Groups from "./pages/Groups";
+import GroupChat from "./pages/GroupChat";
 
 function App() {
   console.log("Supabase client:", supabase);
 
   return (
     <Routes>
-      {/* LANDING */}
+   
       <Route path="/" element={<Index />} />
 
-      {/* AUTH */}
       <Route path="/register" element={<Register />} />
       <Route path="/login" element={<Login />} />
 
-      {/* USER PAGES WITH SHARED HEADER + FOOTER */}
-      <Route
-        path="/home"
-        element={
-          <Layout>
-            <Home />
-          </Layout>
-        }
-      />
-
-      <Route
-        path="/news"
-        element={
-          <Layout>
-            <News />
-          </Layout>
-        }
-      />
-
-      <Route
-        path="/news/:id"
-        element={
-          <Layout>
-            <NewsDetails />
-          </Layout>
-        }
-      />
-
-      {/* ADMIN */}
-      <Route path="/admin" element={<AdminDashboard />} />
-
-      <Route
-        path="/admin/news"
-        element={<AdminNews />}
-      />
-      <Route
-  path="/profile"
-  element={
-    <Layout>
-      <Profile />
-    </Layout>
-  }
-/>
-<Route
-  path="/settings"
-  element={
-    <Layout>
-      <Settings />
-    </Layout>
-  }
-/>
-  <Route
-        path="/notifications"
-        element={
-          <Layout>
-            <Notifications />
-          </Layout>
-        }
-      />
-      <Route
-        path="/community"
-        element={
-          <Layout>
-            <Community />
-          </Layout>
-        }
-      />
-    </Routes>
     
+      <Route path="/admin" element={<AdminDashboard />} />
+      <Route path="/admin/news" element={<AdminNews />} />
+
+    
+      <Route element={<Layout />}>
+        <Route path="/home" element={<Home />} />
+        <Route path="/news" element={<News />} />
+        <Route path="/news/:id" element={<NewsDetails />} />
+        <Route path="/profile" element={<Profile />} />
+        <Route path="/settings" element={<Settings />} />
+        <Route path="/notifications" element={<Notifications />} />
+
+        {/* Community */}
+        <Route path="/community" element={<Community />} />
+        <Route path="/community/online" element={<OnlineUsers />} />
+        <Route path="/community/groups" element={<Groups />} />
+        <Route path="/community/group/:groupId" element={<GroupChat />} />
+      </Route>
+
+      <Route path="*" element={<Navigate to="/" replace />} />
+    </Routes>
   );
 }
 

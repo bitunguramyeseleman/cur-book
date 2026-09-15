@@ -5,7 +5,7 @@ import {
   Smile, Paperclip, Check, CheckCheck, MessageCircle, Users, X,
   Loader2, ChevronDown, Crown, Image as ImageIcon, BellOff, User,
   ChevronRight, AtSign, Calendar, Sparkles, Reply, Pencil, Forward,
-  Trash2,
+  Trash2, Plus,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
@@ -42,7 +42,17 @@ const isSameDay = (a, b) => {
 };
 
 const EMOJIS = ["😀","😂","🥰","😎","🤔","👍","🔥","❤️","🎉","😢","😡","🙏","💯","✨","😴","🤝"];
-const QUICK_REACTIONS = ["👍", "❤️", "😂", "😮", "😢", "🙏"];
+
+// Hover reaction bar (Instagram-style)
+const HOVER_REACTIONS = ["❤️", "😂", "😮", "😢", "🙏", "👍"];
+
+// Full emoji picker
+const REACTION_PICKER = [
+  "❤️","😂","😮","😢","🙏","👍","🔥","💯","🎉","✨",
+  "😀","🥰","😎","🤔","😡","😴","🤝","💔","👏","🤣",
+  "😍","🥳","😅","🤗","😇","🤩","😭","😱","🤯","🥺",
+  "💪","🙌","✨","🌟","⚡","💥","💫","🎯","🏆","🥇",
+];
 
 // =========================================================
 // AVATAR
@@ -171,7 +181,7 @@ function AccordionRow({ label, icon: Icon, open, onToggle, subtitle, children })
 // MESSAGE ACTIONS POPOVER
 // =========================================================
 function MessageActionsPopover({
-  mine, onReply, onEdit, onForward, onDelete, onReact, alignRight,
+  mine, onReply, onEdit, onForward, onDelete, onReact, onOpenPicker, alignRight,
 }) {
   return (
     <motion.div
@@ -183,9 +193,9 @@ function MessageActionsPopover({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="bg-gray-950 border border-gray-800 rounded-2xl shadow-2xl overflow-hidden min-w-[160px]">
-        {/* Quick reactions */}
+        {/* Quick reactions row */}
         <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-gray-800/80">
-          {QUICK_REACTIONS.map((emoji) => (
+          {HOVER_REACTIONS.map((emoji) => (
             <button
               key={emoji}
               onClick={() => onReact(emoji)}
@@ -194,6 +204,13 @@ function MessageActionsPopover({
               {emoji}
             </button>
           ))}
+          <button
+            onClick={onOpenPicker}
+            className="w-8 h-8 rounded-full hover:bg-gray-800 flex items-center justify-center text-gray-400 transition hover:text-yellow-400"
+            title="More emojis"
+          >
+            <Plus size={14} />
+          </button>
         </div>
 
         {/* Actions */}
@@ -231,6 +248,59 @@ function MessageActionsPopover({
         )}
       </div>
     </motion.div>
+  );
+}
+
+// =========================================================
+// EMOJI PICKER MODAL
+// =========================================================
+function ReactionPickerModal({ open, onClose, onPick }) {
+  return (
+    <AnimatePresence>
+      {open && (
+        <>
+          <motion.div
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            onClick={onClose}
+            className="fixed inset-0 z-[200] bg-black/60 backdrop-blur-sm"
+          />
+          <motion.div
+            initial={{ opacity: 0, y: 20, scale: 0.96 }}
+            animate={{ opacity: 1, y: 0, scale: 1 }}
+            exit={{ opacity: 0, y: 20, scale: 0.96 }}
+            className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[210] w-[calc(100%-32px)] max-w-sm bg-gray-950 border border-gray-800 rounded-3xl shadow-2xl overflow-hidden"
+          >
+            <div className="flex items-center justify-between border-b border-gray-800 p-4">
+              <h3 className="font-black text-white text-sm">Pick a reaction</h3>
+              <button
+                onClick={onClose}
+                className="flex h-8 w-8 items-center justify-center rounded-lg bg-gray-900 text-gray-400 transition hover:text-white"
+              >
+                <X size={16} />
+              </button>
+            </div>
+            <div className="p-4 max-h-[60vh] overflow-y-auto">
+              <div className="grid grid-cols-8 gap-1">
+                {REACTION_PICKER.map((emoji) => (
+                  <button
+                    key={emoji}
+                    onClick={() => {
+                      onPick(emoji);
+                      onClose();
+                    }}
+                    className="aspect-square rounded-lg hover:bg-gray-800 flex items-center justify-center text-xl transition hover:scale-110"
+                  >
+                    {emoji}
+                  </button>
+                ))}
+              </div>
+            </div>
+          </motion.div>
+        </>
+      )}
+    </AnimatePresence>
   );
 }
 
@@ -295,6 +365,7 @@ export default function Community() {
 
   // ---- Reactions ----
   const [reactions, setReactions] = useState({});
+  const [pickerMessage, setPickerMessage] = useState(null); // message ID for the emoji picker
 
   // ---- Typing refs ----
   const [typingChannelReady, setTypingChannelReady] = useState(false);
@@ -366,6 +437,7 @@ export default function Community() {
     setReplyTo(null);
     setEditingMessage(null);
     setForwardMessage(null);
+    setPickerMessage(null);
   }, [selectedUser?.id, selectedGroup?.id]);
 
   // Close drawer on resize to desktop
@@ -924,7 +996,9 @@ export default function Community() {
           setReactions((prev) => {
             const list = prev[r.message_id] || [];
             if (list.some((x) => x.id === r.id)) return prev;
-            return { ...prev, [r.message_id]: [...list, r] };
+            // Remove any previous reaction from same user (1 emoji per user)
+            const filtered = list.filter((x) => x.user_id !== r.user_id);
+            return { ...prev, [r.message_id]: [...filtered, r] };
           });
         }
       )
@@ -1057,35 +1131,71 @@ export default function Community() {
   // =========================================================
   // MESSAGE ACTIONS
   // =========================================================
+
+  // ---- TOGGLE REACTION (1 emoji per user) ----
   const toggleReaction = async (messageId, emoji) => {
     if (!user) return;
-    const existing = (reactions[messageId] || []).find(
-      (r) => r.user_id === user.id && r.emoji === emoji
+
+    const myExisting = (reactions[messageId] || []).find(
+      (r) => r.user_id === user.id
     );
 
-    if (existing) {
+    // Same emoji → REMOVE
+    if (myExisting && myExisting.emoji === emoji) {
+      // Optimistic remove
       setReactions((prev) => ({
         ...prev,
-        [messageId]: (prev[messageId] || []).filter((r) => r.id !== existing.id),
+        [messageId]: (prev[messageId] || []).filter((r) => r.id !== myExisting.id),
       }));
       const { error } = await supabase
         .from("message_reactions")
         .delete()
-        .eq("id", existing.id);
+        .eq("id", myExisting.id);
       if (error) console.error(error);
-    } else {
+      setActionMessage(null);
+      return;
+    }
+
+    // Different emoji → REPLACE (delete old, insert new)
+    if (myExisting) {
+      // Optimistic replace
       const tempId = `temp-${Date.now()}`;
-      const optimistic = { id: tempId, message_id: messageId, user_id: user.id, emoji };
+      const optimistic = {
+        id: tempId,
+        message_id: messageId,
+        user_id: user.id,
+        emoji,
+      };
       setReactions((prev) => ({
         ...prev,
-        [messageId]: [...(prev[messageId] || []), optimistic],
+        [messageId]: [
+          ...(prev[messageId] || []).filter((r) => r.user_id !== user.id),
+          optimistic,
+        ],
       }));
-      const { data, error } = await supabase
+
+      // Delete old
+      const { error: delErr } = await supabase
+        .from("message_reactions")
+        .delete()
+        .eq("id", myExisting.id);
+      if (delErr) {
+        console.error(delErr);
+        // revert
+        await loadReactions([messageId]);
+        setActionMessage(null);
+        return;
+      }
+
+      // Insert new
+      const { data, error: insErr } = await supabase
         .from("message_reactions")
         .insert({ message_id: messageId, user_id: user.id, emoji })
         .select()
         .single();
-      if (error) {
+
+      if (insErr) {
+        console.error(insErr);
         setReactions((prev) => ({
           ...prev,
           [messageId]: (prev[messageId] || []).filter((r) => r.id !== tempId),
@@ -1093,9 +1203,46 @@ export default function Community() {
       } else {
         setReactions((prev) => ({
           ...prev,
-          [messageId]: (prev[messageId] || []).map((r) => (r.id === tempId ? data : r)),
+          [messageId]: (prev[messageId] || []).map((r) =>
+            r.id === tempId ? data : r
+          ),
         }));
       }
+      setActionMessage(null);
+      return;
+    }
+
+    // No existing → ADD
+    const tempId = `temp-${Date.now()}`;
+    const optimistic = {
+      id: tempId,
+      message_id: messageId,
+      user_id: user.id,
+      emoji,
+    };
+    setReactions((prev) => ({
+      ...prev,
+      [messageId]: [...(prev[messageId] || []), optimistic],
+    }));
+
+    const { data, error } = await supabase
+      .from("message_reactions")
+      .insert({ message_id: messageId, user_id: user.id, emoji })
+      .select()
+      .single();
+
+    if (error) {
+      setReactions((prev) => ({
+        ...prev,
+        [messageId]: (prev[messageId] || []).filter((r) => r.id !== tempId),
+      }));
+    } else {
+      setReactions((prev) => ({
+        ...prev,
+        [messageId]: (prev[messageId] || []).map((r) =>
+          r.id === tempId ? data : r
+        ),
+      }));
     }
     setActionMessage(null);
   };
@@ -1160,7 +1307,6 @@ export default function Community() {
   const forwardTo = async (target) => {
     if (!forwardMessage) return;
     const text = forwardMessage.message;
-    const now = new Date().toISOString();
 
     if (target.type === "user") {
       await supabase.from("messages").insert({
@@ -2088,7 +2234,6 @@ export default function Community() {
                             ? `rounded-2xl ${isFirstInGroup ? "rounded-tr-2xl" : "rounded-tr-md"} ${isLastInGroup ? "rounded-br-md" : "rounded-br-2xl"}`
                             : `rounded-2xl ${isFirstInGroup ? "rounded-tl-2xl" : "rounded-tl-md"} ${isLastInGroup ? "rounded-bl-md" : "rounded-bl-2xl"}`;
 
-                          // Reply preview
                           const repliedMessage = message.reply_to
                             ? activeMessages.find((m) => m.id === message.reply_to)
                             : null;
@@ -2105,6 +2250,7 @@ export default function Community() {
                             acc[r.emoji] = (acc[r.emoji] || 0) + 1;
                             return acc;
                           }, {});
+                          const myReaction = msgReactions.find((r) => r.user_id === user.id);
 
                           const isActionOpen = actionMessage?.id === message.id;
 
@@ -2125,21 +2271,20 @@ export default function Community() {
                                 animate={{ opacity: 1, y: 0 }}
                                 className={`flex ${mine ? "justify-end" : "justify-start"} ${isLastInGroup ? "mb-2" : "mb-0.5"}`}
                               >
-                                <div className={`max-w-[80%] sm:max-w-[65%] flex gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}>
+                                <div className={`w-fit max-w-[80%] sm:max-w-[500px] flex gap-2 ${mine ? "flex-row-reverse" : "flex-row"}`}>
                                   {!mine && (
                                     <div className="w-9 shrink-0">
                                       {isLastInGroup && <Avatar person={sender} size="sm" />}
                                     </div>
                                   )}
 
-                                  <div className={`flex flex-col ${mine ? "items-end" : "items-start"} relative`}>
+                                  <div className={`flex flex-col ${mine ? "items-end" : "items-start"} relative min-w-0`}>
                                     {!mine && selectedGroup && isFirstInGroup && (
                                       <p className="text-[11px] font-bold text-yellow-400 mb-1 px-1">
                                         {getDisplayName(sender)}
                                       </p>
                                     )}
 
-                                    {/* Reply preview */}
                                     {repliedMessage && (
                                       <div
                                         className={`mb-1 px-3 py-1.5 rounded-xl border-l-2 border-yellow-400 bg-gray-800/60 max-w-full ${
@@ -2159,7 +2304,6 @@ export default function Community() {
                                       </div>
                                     )}
 
-                                    {/* Bubble + hover action */}
                                     <div className="relative">
                                       <div
                                         className={`
@@ -2191,7 +2335,64 @@ export default function Community() {
                                         )}
                                       </div>
 
-                                      {/* Hover trigger */}
+                                      {/* ---- INSTAGRAM-STYLE REACTION PILLS ---- */}
+                                      {Object.keys(groupedReactions).length > 0 && (
+                                        <div
+                                          className={`
+                                            absolute -bottom-2.5 ${mine ? "right-2" : "left-2"}
+                                            flex items-center gap-0.5 z-10
+                                          `}
+                                        >
+                                          {Object.entries(groupedReactions).map(([emoji, count]) => {
+                                            const iReacted = msgReactions.some(
+                                              (r) => r.emoji === emoji && r.user_id === user.id
+                                            );
+                                            return (
+                                              <button
+                                                key={emoji}
+                                                onClick={() => toggleReaction(message.id, emoji)}
+                                                className={`
+                                                  flex items-center gap-0.5
+                                                  rounded-full px-1.5 py-0.5
+                                                  text-[10px] font-bold
+                                                  border shadow-sm backdrop-blur-sm
+                                                  transition
+                                                  ${
+                                                    iReacted
+                                                      ? "bg-yellow-400/30 border-yellow-400/50 text-white"
+                                                      : "bg-gray-900/90 border-gray-700 text-gray-200 hover:border-yellow-400/50"
+                                                  }
+                                                `}
+                                              >
+                                                <span className="text-[11px] leading-none">{emoji}</span>
+                                                {count > 1 && (
+                                                  <span className="text-[9px] leading-none">{count}</span>
+                                                )}
+                                              </button>
+                                            );
+                                          })}
+
+                                          {/* Plus button to open picker */}
+                                          <button
+                                            onClick={(e) => {
+                                              e.stopPropagation();
+                                              setPickerMessage(message.id);
+                                            }}
+                                            className="
+                                              flex items-center justify-center
+                                              rounded-full px-1.5 py-0.5
+                                              text-[10px] font-bold
+                                              bg-gray-900/90 border border-gray-700
+                                              text-gray-400 hover:text-yellow-400 hover:border-yellow-400/50
+                                              shadow-sm backdrop-blur-sm transition
+                                            "
+                                            title="Add reaction"
+                                          >
+                                            <Plus size={9} strokeWidth={3} />
+                                          </button>
+                                        </div>
+                                      )}
+
                                       {!message.deleted_at && !message._optimistic && (
                                         <button
                                           onClick={(e) => {
@@ -2210,7 +2411,6 @@ export default function Community() {
                                         </button>
                                       )}
 
-                                      {/* Action popover */}
                                       <AnimatePresence>
                                         {isActionOpen && (
                                           <MessageActionsPopover
@@ -2224,41 +2424,17 @@ export default function Community() {
                                             }}
                                             onDelete={() => deleteMessage(message)}
                                             onReact={(emoji) => toggleReaction(message.id, emoji)}
+                                            onOpenPicker={() => {
+                                              setPickerMessage(message.id);
+                                              setActionMessage(null);
+                                            }}
                                           />
                                         )}
                                       </AnimatePresence>
                                     </div>
 
-                                    {/* Reactions pills */}
-                                    {Object.keys(groupedReactions).length > 0 && (
-                                      <div className={`flex flex-wrap gap-1 mt-1 ${mine ? "justify-end" : "justify-start"}`}>
-                                        {Object.entries(groupedReactions).map(([emoji, count]) => {
-                                          const iReacted = msgReactions.some(
-                                            (r) => r.emoji === emoji && r.user_id === user.id
-                                          );
-                                          return (
-                                            <button
-                                              key={emoji}
-                                              onClick={() => toggleReaction(message.id, emoji)}
-                                              className={`
-                                                inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-xs font-bold border transition
-                                                ${
-                                                  iReacted
-                                                    ? "bg-yellow-400/20 border-yellow-400/40 text-yellow-400"
-                                                    : "bg-gray-800 border-gray-700 text-gray-300 hover:border-yellow-400/40"
-                                                }
-                                              `}
-                                            >
-                                              <span>{emoji}</span>
-                                              <span>{count}</span>
-                                            </button>
-                                          );
-                                        })}
-                                      </div>
-                                    )}
-
                                     {isLastInGroup && (
-                                      <div className={`flex items-center gap-1.5 mt-1 ${mine ? "justify-end" : "justify-start"}`}>
+                                      <div className={`flex items-center gap-1.5 mt-1.5 ${mine ? "justify-end" : "justify-start"} ${Object.keys(groupedReactions).length > 0 ? "mt-3" : ""}`}>
                                         <span className="text-[9px] text-gray-600">
                                           {formatTime(message.created_at)}
                                         </span>
@@ -2342,7 +2518,6 @@ export default function Community() {
 
                 {/* COMPOSER */}
                 <div className="shrink-0 border-t border-gray-800 p-3 sm:p-4 bg-gray-900">
-                  {/* Reply preview */}
                   <AnimatePresence>
                     {replyTo && (
                       <motion.div
@@ -2529,6 +2704,15 @@ export default function Community() {
           </>
         )}
       </AnimatePresence>
+
+      {/* ================= EMOJI REACTION PICKER MODAL ================= */}
+      <ReactionPickerModal
+        open={!!pickerMessage}
+        onClose={() => setPickerMessage(null)}
+        onPick={(emoji) => {
+          if (pickerMessage) toggleReaction(pickerMessage, emoji);
+        }}
+      />
 
       {/* ================= EDIT MODAL ================= */}
       <AnimatePresence>

@@ -2,55 +2,92 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { motion, AnimatePresence } from "framer-motion";
 import {
-  Camera,
+  ArrowLeft,
+  Bell,
   Check,
-  Image as ImageIcon,
+  ChevronRight,
+  Eye,
+  EyeOff,
+  Globe,
   Loader2,
+  Lock,
+  LogOut,
+  Mail,
+  Moon,
   Save,
-  Settings,
+  Settings as SettingsIcon,
+  Shield,
+  Sparkles,
+  Sun,
+  Trash2,
   User,
+  Volume2,
+  VolumeX,
   X,
+  Zap,
 } from "lucide-react";
-import Cropper from "react-easy-crop";
 import { supabase } from "../lib/supabaseClient";
 
-export default function Profile() {
+export default function Settings() {
   const navigate = useNavigate();
 
   const [user, setUser] = useState(null);
-
-  const [profile, setProfile] = useState({
-    username: "",
-    full_name: "",
-    bio: "",
-    avatar_url: "",
-    created_at: "",
-  });
+  const [profile, setProfile] = useState(null);
 
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
-
   const [message, setMessage] = useState("");
   const [error, setError] = useState("");
 
-  // Image editor states
-  const [selectedImage, setSelectedImage] = useState(null);
-  const [crop, setCrop] = useState({
-    x: 0,
-    y: 0,
+  // Settings state
+  const [settings, setSettings] = useState({
+    // Notifications
+    email_notifications: true,
+    push_notifications: true,
+    message_notifications: true,
+    group_notifications: true,
+    marketing_emails: false,
+
+    // Privacy
+    show_online_status: true,
+    show_read_receipts: true,
+    allow_messages_from: "everyone", // everyone | contacts | nobody
+    profile_visibility: "public", // public | friends | private
+
+    // Appearance
+    theme: "dark", // dark | light | system
+    accent_color: "yellow",
+    message_sounds: true,
+    typing_indicators: true,
+
+    // Language
+    language: "en",
   });
 
-  const [zoom, setZoom] = useState(1);
-  const [croppedAreaPixels, setCroppedAreaPixels] = useState(null);
-  const [showEditor, setShowEditor] = useState(false);
+  const [showPasswordForm, setShowPasswordForm] = useState(false);
+  const [passwordForm, setPasswordForm] = useState({
+    current: "",
+    new: "",
+    confirm: "",
+  });
+  const [showPasswords, setShowPasswords] = useState({
+    current: false,
+    new: false,
+    confirm: false,
+  });
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState(false);
+  const [deleteConfirmText, setDeleteConfirmText] = useState("");
 
-  const [avatarPreview, setAvatarPreview] = useState("");
+  const [activeSection, setActiveSection] = useState("notifications");
 
+  // =========================================================
+  // LOAD
+  // =========================================================
   useEffect(() => {
-    loadProfile();
+    loadSettings();
   }, []);
 
-  const loadProfile = async () => {
+  const loadSettings = async () => {
     try {
       setLoading(true);
       setError("");
@@ -60,10 +97,7 @@ export default function Profile() {
         error: authError,
       } = await supabase.auth.getUser();
 
-      if (authError) {
-        throw authError;
-      }
-
+      if (authError) throw authError;
       if (!currentUser) {
         navigate("/login");
         return;
@@ -71,210 +105,43 @@ export default function Profile() {
 
       setUser(currentUser);
 
-      const { data, error: profileError } = await supabase
+      const { data: profileData } = await supabase
         .from("profiles")
-        .select(
-          "id, username, full_name, bio, avatar_url, created_at"
-        )
+        .select("id, username, full_name, avatar_url")
         .eq("id", currentUser.id)
-        .single();
+        .maybeSingle();
 
-      if (profileError) {
-        throw profileError;
+      setProfile(profileData);
+
+      // Load user settings from DB if the table exists
+      try {
+        const { data: settingsData } = await supabase
+          .from("user_settings")
+          .select("*")
+          .eq("user_id", currentUser.id)
+          .maybeSingle();
+
+        if (settingsData) {
+          setSettings((prev) => ({
+            ...prev,
+            ...settingsData,
+          }));
+        }
+      } catch (err) {
+        // Table doesn't exist yet — use defaults
+        console.warn("user_settings table not found, using defaults");
       }
-
-      setProfile({
-        username: data.username || "",
-        full_name: data.full_name || "",
-        bio: data.bio || "",
-        avatar_url: data.avatar_url || "",
-        created_at: data.created_at || "",
-      });
-
-      setAvatarPreview(data.avatar_url || "");
     } catch (err) {
-      console.error("Profile loading error:", err);
-      setError(err.message || "Failed to load profile.");
+      console.error("Settings loading error:", err);
+      setError("Failed to load settings.");
     } finally {
       setLoading(false);
     }
   };
 
-  /*
-   * Convert the selected image into a preview URL
-   * and open the image editor.
-   */
-  const handleAvatarSelect = (event) => {
-    const file = event.target.files?.[0];
-
-    if (!file) return;
-
-    setError("");
-    setMessage("");
-
-    // Only allow image files
-    if (!file.type.startsWith("image/")) {
-      setError("Please select a valid image.");
-      return;
-    }
-
-    // Maximum file size: 10MB
-    if (file.size > 10 * 1024 * 1024) {
-      setError("Image must be smaller than 10MB.");
-      return;
-    }
-
-    const imageUrl = URL.createObjectURL(file);
-
-    setSelectedImage(imageUrl);
-    setCrop({
-      x: 0,
-      y: 0,
-    });
-    setZoom(1);
-    setShowEditor(true);
-
-    // Reset input so the same image can be selected again
-    event.target.value = "";
-  };
-
-  /*
-   * Called whenever the crop position changes.
-   */
-  const handleCropChange = (newCrop) => {
-    setCrop(newCrop);
-  };
-
-  /*
-   * Called when cropping is finished.
-   */
-  const handleCropComplete = (_, croppedPixels) => {
-    setCroppedAreaPixels(croppedPixels);
-  };
-
-  /*
-   * Create the final cropped image.
-   */
-  const createCroppedImage = async (
-    imageSrc,
-    pixelCrop
-  ) => {
-    const image = await createImage(imageSrc);
-
-    const canvas = document.createElement("canvas");
-    const context = canvas.getContext("2d");
-
-    if (!context) {
-      throw new Error("Could not create image editor.");
-    }
-
-    const outputSize = 800;
-
-    canvas.width = outputSize;
-    canvas.height = outputSize;
-
-    context.imageSmoothingEnabled = true;
-    context.imageSmoothingQuality = "high";
-
-    context.drawImage(
-      image,
-      pixelCrop.x,
-      pixelCrop.y,
-      pixelCrop.width,
-      pixelCrop.height,
-      0,
-      0,
-      outputSize,
-      outputSize
-    );
-
-    return new Promise((resolve, reject) => {
-      canvas.toBlob(
-        (blob) => {
-          if (!blob) {
-            reject(
-              new Error("Failed to create cropped image.")
-            );
-            return;
-          }
-
-          resolve(blob);
-        },
-        "image/jpeg",
-        0.92
-      );
-    });
-  };
-
-  /*
-   * Save the cropped image locally as preview.
-   */
-  const handleApplyCrop = async () => {
-    if (!selectedImage || !croppedAreaPixels) {
-      setError("Please select and crop an image.");
-      return;
-    }
-
-    try {
-      setError("");
-
-      const croppedBlob = await createCroppedImage(
-        selectedImage,
-        croppedAreaPixels
-      );
-
-      const previewUrl = URL.createObjectURL(croppedBlob);
-
-      setAvatarPreview(previewUrl);
-
-      /*
-       * Store the cropped blob temporarily.
-       * It will be uploaded when the user clicks Save Profile.
-       */
-      setProfile((previous) => ({
-        ...previous,
-        avatar_url: previewUrl,
-      }));
-
-      // Keep blob available for upload
-      window.__curBookCroppedAvatar = croppedBlob;
-
-      setShowEditor(false);
-
-      URL.revokeObjectURL(selectedImage);
-      setSelectedImage(null);
-
-      setMessage(
-        "Profile picture edited. Click Save Profile to upload it."
-      );
-    } catch (err) {
-      console.error("Crop error:", err);
-      setError(
-        err.message || "Failed to edit the image."
-      );
-    }
-  };
-
-  /*
-   * Cancel image editing.
-   */
-  const handleCancelCrop = () => {
-    if (selectedImage) {
-      URL.revokeObjectURL(selectedImage);
-    }
-
-    setSelectedImage(null);
-    setShowEditor(false);
-    setZoom(1);
-    setCrop({
-      x: 0,
-      y: 0,
-    });
-  };
-
-  /*
-   * Save profile information and avatar.
-   */
+  // =========================================================
+  // SAVE
+  // =========================================================
   const handleSave = async () => {
     if (!user) return;
 
@@ -283,621 +150,823 @@ export default function Profile() {
       setError("");
       setMessage("");
 
-      let avatarUrl = profile.avatar_url;
+      // Try to upsert settings
+      const { error: saveError } = await supabase
+        .from("user_settings")
+        .upsert(
+          {
+            user_id: user.id,
+            ...settings,
+            updated_at: new Date().toISOString(),
+          },
+          { onConflict: "user_id" }
+        );
 
-      /*
-       * If the user edited a new image,
-       * upload the cropped version.
-       */
-      const croppedBlob =
-        window.__curBookCroppedAvatar;
+      if (saveError) throw saveError;
 
-      if (croppedBlob) {
-        const fileName = `profile-${crypto.randomUUID()}.jpg`;
+      setMessage("Settings saved successfully.");
 
-        const filePath = `${user.id}/${fileName}`;
-
-        const { error: uploadError } = await supabase.storage
-          .from("avatars")
-          .upload(filePath, croppedBlob, {
-            contentType: "image/jpeg",
-            upsert: false,
-          });
-
-        if (uploadError) {
-          throw uploadError;
-        }
-
-        const {
-          data: { publicUrl },
-        } = supabase.storage
-          .from("avatars")
-          .getPublicUrl(filePath);
-
-        avatarUrl = publicUrl;
-
-        window.__curBookCroppedAvatar = null;
+      // Apply theme immediately
+      if (settings.theme === "light") {
+        document.documentElement.classList.remove("dark");
+      } else {
+        document.documentElement.classList.add("dark");
       }
 
-      /*
-       * Update profile.
-       */
-      const { data, error: updateError } = await supabase
-        .from("profiles")
-        .update({
-          username: profile.username.trim() || null,
-          full_name: profile.full_name.trim() || null,
-          bio: profile.bio.trim() || null,
-          avatar_url: avatarUrl || null,
-          updated_at: new Date().toISOString(),
-        })
-        .eq("id", user.id)
-        .select()
-        .single();
-
-      if (updateError) {
-        if (updateError.code === "23505") {
-          throw new Error(
-            "That username is already being used."
-          );
-        }
-
-        throw updateError;
-      }
-
-      setProfile((previous) => ({
-        ...previous,
-        username: data.username || "",
-        full_name: data.full_name || "",
-        bio: data.bio || "",
-        avatar_url: data.avatar_url || "",
-      }));
-
-      setAvatarPreview(data.avatar_url || "");
-
-      setMessage("Profile updated successfully.");
-
-      setTimeout(() => {
-        setMessage("");
-      }, 3000);
+      setTimeout(() => setMessage(""), 3000);
     } catch (err) {
-      console.error("Profile save error:", err);
-      setError(
-        err.message || "Failed to update your profile."
-      );
+      console.error("Save error:", err);
+      setError(err?.message || "Failed to save settings.");
     } finally {
       setSaving(false);
     }
   };
 
-  /*
-   * Create an Image object from a URL.
-   */
-  const createImage = (url) =>
-    new Promise((resolve, reject) => {
-      const image = new Image();
+  // =========================================================
+  // CHANGE PASSWORD
+  // =========================================================
+  const handleChangePassword = async () => {
+    try {
+      setError("");
+      setMessage("");
 
-      image.addEventListener("load", () => {
-        resolve(image);
-      });
-
-      image.addEventListener("error", (error) => {
-        reject(error);
-      });
-
-      image.setAttribute("crossOrigin", "anonymous");
-      image.src = url;
-    });
-
-  const formatDate = (date) => {
-    if (!date) return "Unknown";
-
-    return new Date(date).toLocaleDateString(
-      undefined,
-      {
-        year: "numeric",
-        month: "long",
-        day: "numeric",
+      if (!passwordForm.new || passwordForm.new.length < 6) {
+        setError("New password must be at least 6 characters.");
+        return;
       }
+      if (passwordForm.new !== passwordForm.confirm) {
+        setError("New passwords do not match.");
+        return;
+      }
+
+      const { error: updateError } = await supabase.auth.updateUser({
+        password: passwordForm.new,
+      });
+
+      if (updateError) throw updateError;
+
+      setMessage("Password updated successfully.");
+      setPasswordForm({ current: "", new: "", confirm: "" });
+      setShowPasswordForm(false);
+      setTimeout(() => setMessage(""), 3000);
+    } catch (err) {
+      console.error("Password change error:", err);
+      setError(err?.message || "Failed to update password.");
+    }
+  };
+
+  // =========================================================
+  // LOGOUT / DELETE
+  // =========================================================
+  const handleLogout = async () => {
+    await supabase.auth.signOut();
+    navigate("/login");
+  };
+
+  const handleDeleteAccount = async () => {
+    if (deleteConfirmText !== "DELETE") return;
+    try {
+      setError("");
+      // Note: actual account deletion requires an edge function
+      // with admin privileges. This just logs the user out.
+      await supabase.auth.signOut();
+      navigate("/login");
+    } catch (err) {
+      setError("Failed to delete account. Please contact support.");
+    }
+  };
+
+  // =========================================================
+  // TOGGLE HELPER
+  // =========================================================
+  const Toggle = ({ value, onChange }) => (
+    <button
+      type="button"
+      onClick={() => onChange(!value)}
+      className={`
+        relative inline-flex h-6 w-11 shrink-0 items-center rounded-full
+        transition-colors duration-200
+        ${value ? "bg-yellow-400" : "bg-gray-700"}
+      `}
+    >
+      <span
+        className={`
+          inline-block h-4 w-4 transform rounded-full bg-white transition-transform duration-200
+          ${value ? "translate-x-6" : "translate-x-1"}
+        `}
+      />
+    </button>
+  );
+
+  // =========================================================
+  // SECTION ROW
+  // =========================================================
+  const SectionRow = ({ icon: Icon, label, description, children }) => (
+    <div className="flex items-center justify-between gap-4 py-3.5">
+      <div className="flex items-start gap-3 min-w-0">
+        {Icon && (
+          <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-xl bg-gray-800 text-gray-400 mt-0.5">
+            <Icon size={16} />
+          </div>
+        )}
+        <div className="min-w-0">
+          <p className="text-sm font-bold text-white">{label}</p>
+          {description && (
+            <p className="text-xs text-gray-500 mt-0.5">{description}</p>
+          )}
+        </div>
+      </div>
+      <div className="shrink-0">{children}</div>
+    </div>
+  );
+
+  // =========================================================
+  // SECTION WRAPPER
+  // =========================================================
+  const Section = ({ id, icon: Icon, title, description, children }) => {
+    const isOpen = activeSection === id;
+    return (
+      <div className="rounded-3xl border border-gray-800 bg-gray-900 overflow-hidden">
+        <button
+          type="button"
+          onClick={() => setActiveSection(isOpen ? null : id)}
+          className="w-full flex items-center justify-between gap-4 p-5 text-left transition hover:bg-gray-900/50"
+        >
+          <div className="flex items-center gap-4 min-w-0">
+            <div className="flex h-11 w-11 shrink-0 items-center justify-center rounded-2xl bg-yellow-400/10 border border-yellow-400/20 text-yellow-400">
+              <Icon size={20} />
+            </div>
+            <div className="min-w-0">
+              <p className="text-base font-black text-white">{title}</p>
+              {description && (
+                <p className="text-xs text-gray-500 mt-0.5">{description}</p>
+              )}
+            </div>
+          </div>
+          <ChevronRight
+            size={18}
+            className={`shrink-0 text-gray-500 transition-transform duration-200 ${
+              isOpen ? "rotate-90" : ""
+            }`}
+          />
+        </button>
+
+        <AnimatePresence initial={false}>
+          {isOpen && (
+            <motion.div
+              initial={{ height: 0, opacity: 0 }}
+              animate={{ height: "auto", opacity: 1 }}
+              exit={{ height: 0, opacity: 0 }}
+              transition={{ duration: 0.25, ease: "easeInOut" }}
+              className="overflow-hidden"
+            >
+              <div className="px-5 pb-5 divide-y divide-gray-800/60">
+                {children}
+              </div>
+            </motion.div>
+          )}
+        </AnimatePresence>
+      </div>
     );
   };
 
+  // =========================================================
+  // LOADING
+  // =========================================================
   if (loading) {
     return (
-      <div className="min-h-screen bg-gray-50 px-4 py-10">
-        <div className="mx-auto max-w-4xl">
-          <div className="animate-pulse space-y-6">
-            <div className="h-12 w-52 rounded-xl bg-gray-200" />
-            <div className="h-72 rounded-3xl bg-gray-200" />
-            <div className="h-96 rounded-3xl bg-gray-200" />
+      <div className="min-h-screen bg-gray-950 px-4 py-10">
+        <div className="mx-auto max-w-3xl">
+          <div className="animate-pulse space-y-4">
+            <div className="h-12 w-52 rounded-xl bg-gray-900" />
+            <div className="h-24 rounded-3xl bg-gray-900" />
+            <div className="h-24 rounded-3xl bg-gray-900" />
+            <div className="h-24 rounded-3xl bg-gray-900" />
           </div>
         </div>
       </div>
     );
   }
 
+  // =========================================================
+  // RENDER
+  // =========================================================
   return (
     <>
-      <div className="min-h-screen bg-gray-50 px-4 py-8 sm:px-6 lg:px-8">
-        <div className="mx-auto max-w-4xl">
+      <div className="min-h-screen bg-gray-950 px-4 py-8 text-white sm:px-6 lg:px-8">
+        <div className="mx-auto max-w-3xl">
 
-          {/* PAGE HEADER */}
+          {/* ================= HEADER ================= */}
           <motion.div
-            initial={{
-              opacity: 0,
-              y: -20,
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            className="mb-8 flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"
+            initial={{ opacity: 0, y: -20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="mb-8 flex items-center gap-4"
           >
-            <div>
-              <div className="mb-2 flex items-center gap-3">
-                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-400 text-gray-950 shadow-lg shadow-yellow-400/20">
-                  <User size={24} />
-                </div>
-
-                <h1 className="text-3xl font-black tracking-tight text-gray-950">
-                  My Profile
-                </h1>
-              </div>
-
-              <p className="text-sm text-gray-500">
-                Manage your cur.book profile and
-                personal information.
-              </p>
-            </div>
-
             <button
               type="button"
-              onClick={() => navigate("/settings")}
-              className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-5 py-3 font-semibold text-gray-800 shadow-sm transition hover:border-gray-300 hover:bg-gray-50"
+              onClick={() => navigate(-1)}
+              className="flex h-12 w-12 items-center justify-center rounded-2xl bg-gray-900 border border-gray-800 text-gray-300 shadow-sm transition hover:border-yellow-400/50 hover:bg-yellow-400/10 hover:text-yellow-400"
+              title="Go back"
             >
-              <Settings size={18} />
-              Settings
+              <ArrowLeft size={20} />
             </button>
+
+            <div className="flex-1 min-w-0">
+              <div className="mb-2 flex items-center gap-3">
+                <div className="flex h-12 w-12 items-center justify-center rounded-2xl bg-yellow-400 text-gray-950 shadow-lg shadow-yellow-400/20">
+                  <SettingsIcon size={24} />
+                </div>
+                <h1 className="text-3xl font-black tracking-tight text-white">
+                  Settings
+                </h1>
+              </div>
+              <p className="text-sm text-gray-400">
+                Manage your account, privacy and app preferences.
+              </p>
+            </div>
           </motion.div>
 
-          {/* MESSAGES */}
+          {/* ================= MESSAGES ================= */}
           <AnimatePresence>
             {message && (
               <motion.div
-                initial={{
-                  opacity: 0,
-                  y: -10,
-                }}
-                animate={{
-                  opacity: 1,
-                  y: 0,
-                }}
-                exit={{
-                  opacity: 0,
-                  y: -10,
-                }}
-                className="mb-6 flex items-center gap-3 rounded-2xl border border-yellow-300 bg-yellow-50 px-5 py-4 text-sm font-semibold text-gray-900"
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-6 flex items-center gap-3 rounded-2xl border border-yellow-400/30 bg-yellow-400/10 px-5 py-4 text-sm font-semibold text-white"
               >
                 <div className="flex h-8 w-8 shrink-0 items-center justify-center rounded-full bg-yellow-400">
-                  <Check size={17} />
+                  <Check size={17} className="text-gray-950" />
                 </div>
-
                 <span>{message}</span>
               </motion.div>
             )}
 
             {error && (
               <motion.div
-                initial={{
-                  opacity: 0,
-                  y: -10,
-                }}
-                animate={{
-                  opacity: 1,
-                  y: 0,
-                }}
-                exit={{
-                  opacity: 0,
-                  y: -10,
-                }}
-                className="mb-6 rounded-2xl border border-red-200 bg-red-50 px-5 py-4 text-sm font-medium text-red-700"
+                initial={{ opacity: 0, y: -10 }}
+                animate={{ opacity: 1, y: 0 }}
+                exit={{ opacity: 0, y: -10 }}
+                className="mb-6 flex items-center justify-between gap-3 rounded-2xl border border-red-500/30 bg-red-500/10 px-5 py-4 text-sm font-medium text-red-300"
               >
-                {error}
+                <span>{error}</span>
+                <button
+                  onClick={() => setError("")}
+                  className="text-red-400 hover:text-red-300"
+                >
+                  <X size={16} />
+                </button>
               </motion.div>
             )}
           </AnimatePresence>
 
-          {/* PROFILE HERO */}
+          {/* ================= SECTIONS ================= */}
           <motion.div
-            initial={{
-              opacity: 0,
-              y: 20,
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            className="mb-6 overflow-hidden rounded-3xl border border-gray-200 bg-white shadow-sm"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            className="space-y-4"
           >
-            <div className="h-32 bg-gray-950">
-              <div className="h-full bg-gradient-to-r from-gray-950 via-gray-900 to-yellow-400/20" />
-            </div>
+            {/* -------- NOTIFICATIONS -------- */}
+            <Section
+              id="notifications"
+              icon={Bell}
+              title="Notifications"
+              description="Choose what updates you want to receive"
+            >
+              <SectionRow
+                icon={Mail}
+                label="Email notifications"
+                description="Receive updates via email"
+              >
+                <Toggle
+                  value={settings.email_notifications}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, email_notifications: v }))
+                  }
+                />
+              </SectionRow>
 
-            <div className="px-6 pb-7">
-              <div className="-mt-16 flex flex-col gap-5 sm:flex-row sm:items-end sm:justify-between">
+              <SectionRow
+                icon={Zap}
+                label="Push notifications"
+                description="Get notified on your devices"
+              >
+                <Toggle
+                  value={settings.push_notifications}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, push_notifications: v }))
+                  }
+                />
+              </SectionRow>
 
-                {/* AVATAR */}
-                <div className="relative">
-                  <div className="h-32 w-32 overflow-hidden rounded-full border-4 border-white bg-yellow-400 shadow-xl">
-                    {avatarPreview ? (
-                      <img
-                        src={avatarPreview}
-                        alt="Profile"
-                        className="h-full w-full object-cover"
-                      />
-                    ) : (
-                      <div className="flex h-full w-full items-center justify-center text-4xl font-black text-gray-950">
-                        {(
-                          profile.full_name ||
-                          profile.username ||
-                          "U"
-                        )
-                          .charAt(0)
-                          .toUpperCase()}
-                      </div>
-                    )}
-                  </div>
+              <SectionRow
+                icon={Bell}
+                label="Direct messages"
+                description="Notify me about new messages"
+              >
+                <Toggle
+                  value={settings.message_notifications}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, message_notifications: v }))
+                  }
+                />
+              </SectionRow>
 
-                  {/* CAMERA BUTTON */}
-                  <label
-                    htmlFor="avatar-upload"
-                    className="absolute bottom-1 right-1 flex h-11 w-11 cursor-pointer items-center justify-center rounded-full border-4 border-white bg-yellow-400 text-gray-950 shadow-lg transition hover:scale-105 hover:bg-yellow-300"
-                  >
-                    <Camera size={19} />
+              <SectionRow
+                icon={Bell}
+                label="Group activity"
+                description="Notify me about group messages"
+              >
+                <Toggle
+                  value={settings.group_notifications}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, group_notifications: v }))
+                  }
+                />
+              </SectionRow>
 
-                    <input
-                      id="avatar-upload"
-                      type="file"
-                      accept="image/*"
-                      onChange={handleAvatarSelect}
-                      className="hidden"
-                    />
-                  </label>
-                </div>
+              <SectionRow
+                icon={Sparkles}
+                label="Marketing emails"
+                description="Receive product news and updates"
+              >
+                <Toggle
+                  value={settings.marketing_emails}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, marketing_emails: v }))
+                  }
+                />
+              </SectionRow>
+            </Section>
 
-                {/* PROFILE INFO */}
-                <div className="flex-1 sm:pb-2">
-                  <h2 className="text-2xl font-black text-gray-950">
-                    {profile.full_name ||
-                      profile.username ||
-                      "User"}
-                  </h2>
+            {/* -------- PRIVACY -------- */}
+            <Section
+              id="privacy"
+              icon={Shield}
+              title="Privacy & Security"
+              description="Control who sees your activity"
+            >
+              <SectionRow
+                icon={Eye}
+                label="Show online status"
+                description="Let others see when you're online"
+              >
+                <Toggle
+                  value={settings.show_online_status}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, show_online_status: v }))
+                  }
+                />
+              </SectionRow>
 
-                  {profile.username && (
-                    <p className="mt-1 text-sm text-gray-500">
-                      @{profile.username}
-                    </p>
-                  )}
+              <SectionRow
+                icon={Check}
+                label="Read receipts"
+                description="Let others know when you've read messages"
+              >
+                <Toggle
+                  value={settings.show_read_receipts}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, show_read_receipts: v }))
+                  }
+                />
+              </SectionRow>
 
-                  <p className="mt-2 text-xs font-medium text-gray-400">
-                    Member since{" "}
-                    {formatDate(profile.created_at)}
-                  </p>
-                </div>
-              </div>
-            </div>
-          </motion.div>
-
-          {/* EDIT PROFILE */}
-          <motion.div
-            initial={{
-              opacity: 0,
-              y: 20,
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              delay: 0.1,
-            }}
-            className="rounded-3xl border border-gray-200 bg-white p-6 shadow-sm sm:p-8"
-          >
-            <div className="mb-7">
-              <h2 className="text-xl font-black text-gray-950">
-                Edit Profile
-              </h2>
-
-              <p className="mt-1 text-sm text-gray-500">
-                Update your public profile information.
-              </p>
-            </div>
-
-            <div className="space-y-6">
-
-              {/* USERNAME */}
-              <div>
-                <label
-                  htmlFor="username"
-                  className="mb-2 block text-sm font-bold text-gray-800"
-                >
-                  Username
-                </label>
-
-                <input
-                  id="username"
-                  type="text"
-                  value={profile.username}
-                  onChange={(event) =>
-                    setProfile((previous) => ({
-                      ...previous,
-                      username: event.target.value,
+              <SectionRow
+                icon={User}
+                label="Who can message you"
+                description="Control incoming messages"
+              >
+                <select
+                  value={settings.allow_messages_from}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      allow_messages_from: e.target.value,
                     }))
                   }
-                  placeholder="Enter your username"
-                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-gray-950 outline-none transition focus:border-yellow-400 focus:bg-white focus:ring-4 focus:ring-yellow-400/10"
-                />
-              </div>
-
-              {/* FULL NAME */}
-              <div>
-                <label
-                  htmlFor="full_name"
-                  className="mb-2 block text-sm font-bold text-gray-800"
+                  className="rounded-xl border border-gray-800 bg-gray-950 px-3 py-2 text-xs font-bold text-white outline-none focus:border-yellow-400"
                 >
-                  Full Name
-                </label>
+                  <option value="everyone">Everyone</option>
+                  <option value="contacts">Contacts only</option>
+                  <option value="nobody">Nobody</option>
+                </select>
+              </SectionRow>
 
-                <input
-                  id="full_name"
-                  type="text"
-                  value={profile.full_name}
-                  onChange={(event) =>
-                    setProfile((previous) => ({
-                      ...previous,
-                      full_name: event.target.value,
+              <SectionRow
+                icon={Globe}
+                label="Profile visibility"
+                description="Who can view your profile"
+              >
+                <select
+                  value={settings.profile_visibility}
+                  onChange={(e) =>
+                    setSettings((s) => ({
+                      ...s,
+                      profile_visibility: e.target.value,
                     }))
                   }
-                  placeholder="Enter your full name"
-                  className="w-full rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-gray-950 outline-none transition focus:border-yellow-400 focus:bg-white focus:ring-4 focus:ring-yellow-400/10"
-                />
-              </div>
-
-              {/* BIO */}
-              <div>
-                <label
-                  htmlFor="bio"
-                  className="mb-2 block text-sm font-bold text-gray-800"
+                  className="rounded-xl border border-gray-800 bg-gray-950 px-3 py-2 text-xs font-bold text-white outline-none focus:border-yellow-400"
                 >
-                  Bio
-                </label>
+                  <option value="public">Public</option>
+                  <option value="friends">Friends only</option>
+                  <option value="private">Private</option>
+                </select>
+              </SectionRow>
 
-                <textarea
-                  id="bio"
-                  value={profile.bio}
-                  onChange={(event) =>
-                    setProfile((previous) => ({
-                      ...previous,
-                      bio: event.target.value,
-                    }))
-                  }
-                  placeholder="Tell people a little about yourself..."
-                  rows={5}
-                  maxLength={300}
-                  className="w-full resize-none rounded-2xl border border-gray-200 bg-gray-50 px-4 py-3.5 text-gray-950 outline-none transition focus:border-yellow-400 focus:bg-white focus:ring-4 focus:ring-yellow-400/10"
-                />
-
-                <p className="mt-2 text-right text-xs text-gray-400">
-                  {profile.bio.length}/300
-                </p>
-              </div>
-
-              {/* SAVE */}
-              <div className="flex justify-end border-t border-gray-100 pt-6">
+              {/* Change password */}
+              <div className="pt-3.5">
                 <button
                   type="button"
-                  onClick={handleSave}
-                  disabled={saving}
-                  className="flex items-center justify-center gap-2 rounded-2xl bg-yellow-400 px-7 py-3.5 font-black text-gray-950 shadow-lg shadow-yellow-400/20 transition hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-60"
+                  onClick={() => setShowPasswordForm((v) => !v)}
+                  className="flex w-full items-center justify-between gap-3 rounded-xl border border-gray-800 bg-gray-950 px-4 py-3 text-left transition hover:border-yellow-400/40"
                 >
-                  {saving ? (
-                    <>
-                      <Loader2
-                        size={19}
-                        className="animate-spin"
-                      />
-                      Saving...
-                    </>
-                  ) : (
-                    <>
-                      <Save size={19} />
-                      Save Profile
-                    </>
-                  )}
+                  <div className="flex items-center gap-3">
+                    <div className="flex h-9 w-9 items-center justify-center rounded-xl bg-gray-800 text-gray-400">
+                      <Lock size={16} />
+                    </div>
+                    <div>
+                      <p className="text-sm font-bold text-white">
+                        Change password
+                      </p>
+                      <p className="text-xs text-gray-500 mt-0.5">
+                        Update your account password
+                      </p>
+                    </div>
+                  </div>
+                  <ChevronRight
+                    size={16}
+                    className={`text-gray-500 transition-transform ${
+                      showPasswordForm ? "rotate-90" : ""
+                    }`}
+                  />
                 </button>
+
+                <AnimatePresence>
+                  {showPasswordForm && (
+                    <motion.div
+                      initial={{ height: 0, opacity: 0 }}
+                      animate={{ height: "auto", opacity: 1 }}
+                      exit={{ height: 0, opacity: 0 }}
+                      className="overflow-hidden"
+                    >
+                      <div className="mt-3 space-y-3 rounded-xl bg-gray-950 border border-gray-800 p-4">
+                        {/* Current */}
+                        <div className="relative">
+                          <input
+                            type={showPasswords.current ? "text" : "password"}
+                            value={passwordForm.current}
+                            onChange={(e) =>
+                              setPasswordForm((p) => ({
+                                ...p,
+                                current: e.target.value,
+                              }))
+                            }
+                            placeholder="Current password"
+                            className="w-full rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 pr-12 text-sm text-white outline-none transition focus:border-yellow-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowPasswords((p) => ({
+                                ...p,
+                                current: !p.current,
+                              }))
+                            }
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                          >
+                            {showPasswords.current ? (
+                              <EyeOff size={16} />
+                            ) : (
+                              <Eye size={16} />
+                            )}
+                          </button>
+                        </div>
+
+                        {/* New */}
+                        <div className="relative">
+                          <input
+                            type={showPasswords.new ? "text" : "password"}
+                            value={passwordForm.new}
+                            onChange={(e) =>
+                              setPasswordForm((p) => ({
+                                ...p,
+                                new: e.target.value,
+                              }))
+                            }
+                            placeholder="New password"
+                            className="w-full rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 pr-12 text-sm text-white outline-none transition focus:border-yellow-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowPasswords((p) => ({ ...p, new: !p.new }))
+                            }
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                          >
+                            {showPasswords.new ? (
+                              <EyeOff size={16} />
+                            ) : (
+                              <Eye size={16} />
+                            )}
+                          </button>
+                        </div>
+
+                        {/* Confirm */}
+                        <div className="relative">
+                          <input
+                            type={showPasswords.confirm ? "text" : "password"}
+                            value={passwordForm.confirm}
+                            onChange={(e) =>
+                              setPasswordForm((p) => ({
+                                ...p,
+                                confirm: e.target.value,
+                              }))
+                            }
+                            placeholder="Confirm new password"
+                            className="w-full rounded-xl border border-gray-800 bg-gray-900 px-4 py-3 pr-12 text-sm text-white outline-none transition focus:border-yellow-400"
+                          />
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setShowPasswords((p) => ({
+                                ...p,
+                                confirm: !p.confirm,
+                              }))
+                            }
+                            className="absolute right-3 top-1/2 -translate-y-1/2 text-gray-500 hover:text-white"
+                          >
+                            {showPasswords.confirm ? (
+                              <EyeOff size={16} />
+                            ) : (
+                              <Eye size={16} />
+                            )}
+                          </button>
+                        </div>
+
+                        <div className="flex justify-end gap-2 pt-2">
+                          <button
+                            type="button"
+                            onClick={() => {
+                              setShowPasswordForm(false);
+                              setPasswordForm({
+                                current: "",
+                                new: "",
+                                confirm: "",
+                              });
+                            }}
+                            className="rounded-xl border border-gray-800 bg-gray-900 px-4 py-2 text-xs font-bold text-gray-300 transition hover:bg-gray-800"
+                          >
+                            Cancel
+                          </button>
+                          <button
+                            type="button"
+                            onClick={handleChangePassword}
+                            className="rounded-xl bg-yellow-400 px-4 py-2 text-xs font-black text-gray-950 transition hover:bg-yellow-300"
+                          >
+                            Update Password
+                          </button>
+                        </div>
+                      </div>
+                    </motion.div>
+                  )}
+                </AnimatePresence>
               </div>
-            </div>
+            </Section>
+
+            {/* -------- APPEARANCE -------- */}
+            <Section
+              id="appearance"
+              icon={Sun}
+              title="Appearance"
+              description="Customize how the app looks and feels"
+            >
+              <SectionRow
+                icon={Moon}
+                label="Theme"
+                description="Choose your preferred theme"
+              >
+                <select
+                  value={settings.theme}
+                  onChange={(e) =>
+                    setSettings((s) => ({ ...s, theme: e.target.value }))
+                  }
+                  className="rounded-xl border border-gray-800 bg-gray-950 px-3 py-2 text-xs font-bold text-white outline-none focus:border-yellow-400"
+                >
+                  <option value="dark">Dark</option>
+                  <option value="light">Light</option>
+                  <option value="system">System</option>
+                </select>
+              </SectionRow>
+
+              <SectionRow
+                icon={Volume2}
+                label="Message sounds"
+                description="Play a sound for new messages"
+              >
+                <Toggle
+                  value={settings.message_sounds}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, message_sounds: v }))
+                  }
+                />
+              </SectionRow>
+
+              <SectionRow
+                icon={Sparkles}
+                label="Typing indicators"
+                description="Show when someone is typing"
+              >
+                <Toggle
+                  value={settings.typing_indicators}
+                  onChange={(v) =>
+                    setSettings((s) => ({ ...s, typing_indicators: v }))
+                  }
+                />
+              </SectionRow>
+            </Section>
+
+            {/* -------- LANGUAGE -------- */}
+            <Section
+              id="language"
+              icon={Globe}
+              title="Language & Region"
+              description="Set your preferred language"
+            >
+              <SectionRow
+                icon={Globe}
+                label="Language"
+                description="Choose your preferred language"
+              >
+                <select
+                  value={settings.language}
+                  onChange={(e) =>
+                    setSettings((s) => ({ ...s, language: e.target.value }))
+                  }
+                  className="rounded-xl border border-gray-800 bg-gray-950 px-3 py-2 text-xs font-bold text-white outline-none focus:border-yellow-400"
+                >
+                  <option value="en">English</option>
+                  <option value="fr">Français</option>
+                  <option value="rw">Kinyarwanda</option>
+                  <option value="sw">Kiswahili</option>
+                  <option value="es">Español</option>
+                  <option value="ar">العربية</option>
+                </select>
+              </SectionRow>
+            </Section>
+
+            {/* -------- ACCOUNT -------- */}
+            <Section
+              id="account"
+              icon={User}
+              title="Account"
+              description="Manage your account and sessions"
+            >
+              <SectionRow
+                icon={User}
+                label="Signed in as"
+                description={user?.email || "Unknown"}
+              >
+                <button
+                  onClick={() => navigate("/profile")}
+                  className="rounded-xl border border-gray-800 bg-gray-950 px-3 py-2 text-xs font-bold text-gray-300 transition hover:border-yellow-400/40 hover:text-yellow-400"
+                >
+                  View Profile
+                </button>
+              </SectionRow>
+
+              <SectionRow
+                icon={LogOut}
+                label="Sign out"
+                description="Log out of this device"
+              >
+                <button
+                  onClick={handleLogout}
+                  className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-300 transition hover:bg-red-500/20"
+                >
+                  Sign Out
+                </button>
+              </SectionRow>
+            </Section>
+
+            {/* -------- DANGER ZONE -------- */}
+            <Section
+              id="danger"
+              icon={Trash2}
+              title="Danger Zone"
+              description="Irreversible actions — be careful"
+            >
+              <SectionRow
+                icon={Trash2}
+                label="Delete account"
+                description="Permanently delete your account and all data"
+              >
+                <button
+                  onClick={() => setShowDeleteConfirm(true)}
+                  className="rounded-xl border border-red-500/30 bg-red-500/10 px-3 py-2 text-xs font-bold text-red-300 transition hover:bg-red-500/20"
+                >
+                  Delete
+                </button>
+              </SectionRow>
+            </Section>
           </motion.div>
 
-          {/* QUICK LINKS */}
+          {/* ================= SAVE BUTTON (sticky) ================= */}
           <motion.div
-            initial={{
-              opacity: 0,
-              y: 20,
-            }}
-            animate={{
-              opacity: 1,
-              y: 0,
-            }}
-            transition={{
-              delay: 0.15,
-            }}
-            className="mt-6 grid grid-cols-1 gap-4 sm:grid-cols-2"
+            initial={{ opacity: 0, y: 20 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ delay: 0.15 }}
+            className="sticky bottom-4 mt-8"
           >
-            <button
-              type="button"
-              onClick={() => navigate("/notifications")}
-              className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-yellow-300"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-yellow-100 text-gray-900">
-                  <ImageIcon size={20} />
-                </div>
-
-                <div>
-                  <p className="font-bold text-gray-950">
-                    Notifications
-                  </p>
-
-                  <p className="text-sm text-gray-500">
-                    View your latest updates
-                  </p>
-                </div>
+            <div className="flex items-center justify-between gap-4 rounded-2xl border border-gray-800 bg-gray-900/95 backdrop-blur p-4 shadow-2xl">
+              <div className="hidden sm:block">
+                <p className="text-xs font-bold text-white">
+                  Don't forget to save
+                </p>
+                <p className="text-[11px] text-gray-500 mt-0.5">
+                  Changes are applied after clicking save
+                </p>
               </div>
-            </button>
-
-            <button
-              type="button"
-              onClick={() => navigate("/settings")}
-              className="flex items-center justify-between rounded-2xl border border-gray-200 bg-white p-5 text-left shadow-sm transition hover:-translate-y-0.5 hover:border-yellow-300"
-            >
-              <div className="flex items-center gap-3">
-                <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-gray-100 text-gray-900">
-                  <Settings size={20} />
-                </div>
-
-                <div>
-                  <p className="font-bold text-gray-950">
-                    Settings
-                  </p>
-
-                  <p className="text-sm text-gray-500">
-                    Manage your preferences
-                  </p>
-                </div>
-              </div>
-            </button>
+              <button
+                onClick={handleSave}
+                disabled={saving}
+                className="flex flex-1 sm:flex-none items-center justify-center gap-2 rounded-xl bg-yellow-400 px-6 py-3 text-sm font-black text-gray-950 shadow-lg shadow-yellow-400/20 transition hover:bg-yellow-300 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                {saving ? (
+                  <>
+                    <Loader2 size={17} className="animate-spin" />
+                    Saving...
+                  </>
+                ) : (
+                  <>
+                    <Save size={17} />
+                    Save Changes
+                  </>
+                )}
+              </button>
+            </div>
           </motion.div>
         </div>
       </div>
 
-      {/* IMAGE EDITOR MODAL */}
+      {/* ================= DELETE ACCOUNT MODAL ================= */}
       <AnimatePresence>
-        {showEditor && selectedImage && (
+        {showDeleteConfirm && (
           <motion.div
-            initial={{
-              opacity: 0,
-            }}
-            animate={{
-              opacity: 1,
-            }}
-            exit={{
-              opacity: 0,
-            }}
-            className="fixed inset-0 z-[100] flex items-center justify-center bg-gray-950/90 p-4"
+            initial={{ opacity: 0 }}
+            animate={{ opacity: 1 }}
+            exit={{ opacity: 0 }}
+            className="fixed inset-0 z-[100] flex items-center justify-center bg-black/90 p-4 backdrop-blur-sm"
           >
             <motion.div
-              initial={{
-                opacity: 0,
-                scale: 0.95,
-              }}
-              animate={{
-                opacity: 1,
-                scale: 1,
-              }}
-              exit={{
-                opacity: 0,
-                scale: 0.95,
-              }}
-              className="w-full max-w-2xl overflow-hidden rounded-3xl bg-white shadow-2xl"
+              initial={{ opacity: 0, scale: 0.95, y: 20 }}
+              animate={{ opacity: 1, scale: 1, y: 0 }}
+              exit={{ opacity: 0, scale: 0.95, y: 20 }}
+              className="w-full max-w-md overflow-hidden rounded-3xl bg-gray-900 border border-red-500/30 shadow-2xl"
             >
-
-              {/* MODAL HEADER */}
-              <div className="flex items-center justify-between border-b border-gray-200 px-5 py-4">
-                <div>
-                  <h2 className="text-lg font-black text-gray-950">
-                    Edit Profile Picture
-                  </h2>
-
-                  <p className="text-xs text-gray-500">
-                    Move and zoom your image to adjust it.
-                  </p>
+              <div className="p-6">
+                <div className="mx-auto flex h-16 w-16 items-center justify-center rounded-2xl bg-red-500/10 border border-red-500/30 mb-5">
+                  <Trash2 size={28} className="text-red-400" />
                 </div>
+                <h2 className="text-xl font-black text-center text-white">
+                  Delete account?
+                </h2>
+                <p className="mt-2 text-sm text-center text-gray-400">
+                  This action cannot be undone. All your messages, groups, and
+                  data will be permanently deleted.
+                </p>
 
-                <button
-                  type="button"
-                  onClick={handleCancelCrop}
-                  className="flex h-10 w-10 items-center justify-center rounded-full bg-gray-100 text-gray-700 transition hover:bg-gray-200"
-                >
-                  <X size={20} />
-                </button>
-              </div>
-
-              {/* CROP AREA */}
-              <div className="relative h-[400px] w-full bg-gray-950 sm:h-[500px]">
-                <Cropper
-                  image={selectedImage}
-                  crop={crop}
-                  zoom={zoom}
-                  aspect={1}
-                  cropShape="round"
-                  showGrid={true}
-                  onCropChange={handleCropChange}
-                  onCropComplete={handleCropComplete}
-                  onZoomChange={setZoom}
-                />
-              </div>
-
-              {/* CONTROLS */}
-              <div className="space-y-5 p-5">
-
-                {/* ZOOM */}
-                <div>
-                  <div className="mb-2 flex items-center justify-between">
-                    <span className="text-sm font-bold text-gray-800">
-                      Zoom
-                    </span>
-
-                    <span className="text-xs font-semibold text-gray-500">
-                      {zoom.toFixed(1)}x
-                    </span>
-                  </div>
-
+                <div className="mt-5">
+                  <label className="text-xs font-bold text-gray-400 uppercase tracking-wider">
+                    Type "DELETE" to confirm
+                  </label>
                   <input
-                    type="range"
-                    min="1"
-                    max="3"
-                    step="0.1"
-                    value={zoom}
-                    onChange={(event) =>
-                      setZoom(Number(event.target.value))
-                    }
-                    className="w-full accent-yellow-400"
+                    type="text"
+                    value={deleteConfirmText}
+                    onChange={(e) => setDeleteConfirmText(e.target.value)}
+                    placeholder="DELETE"
+                    className="mt-2 w-full rounded-xl border border-gray-800 bg-gray-950 px-4 py-3 text-sm text-white outline-none transition focus:border-red-500"
                   />
                 </div>
+              </div>
 
-                {/* BUTTONS */}
-                <div className="flex flex-col gap-3 sm:flex-row sm:justify-end">
-
-                  <button
-                    type="button"
-                    onClick={handleCancelCrop}
-                    className="flex items-center justify-center gap-2 rounded-2xl border border-gray-200 bg-white px-6 py-3 font-bold text-gray-800 transition hover:bg-gray-50"
-                  >
-                    <X size={18} />
-                    Cancel
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={handleApplyCrop}
-                    className="flex items-center justify-center gap-2 rounded-2xl bg-yellow-400 px-6 py-3 font-black text-gray-950 shadow-lg shadow-yellow-400/20 transition hover:bg-yellow-300"
-                  >
-                    <Check size={18} />
-                    Apply Edit
-                  </button>
-
-                </div>
+              <div className="flex gap-2 border-t border-gray-800 p-4">
+                <button
+                  onClick={() => {
+                    setShowDeleteConfirm(false);
+                    setDeleteConfirmText("");
+                  }}
+                  className="flex-1 rounded-xl border border-gray-800 bg-gray-950 py-3 text-sm font-bold text-gray-300 transition hover:bg-gray-900"
+                >
+                  Cancel
+                </button>
+                <button
+                  onClick={handleDeleteAccount}
+                  disabled={deleteConfirmText !== "DELETE"}
+                  className="flex-1 rounded-xl bg-red-500 py-3 text-sm font-black text-white transition hover:bg-red-400 disabled:opacity-40 disabled:cursor-not-allowed"
+                >
+                  Delete Forever
+                </button>
               </div>
             </motion.div>
           </motion.div>

@@ -1,5 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import { Link, useLocation, useNavigate, Outlet } from "react-router-dom";
+import {
+  Link,
+  useLocation,
+  useNavigate,
+  Outlet,
+} from "react-router-dom";
 import {
   Bell,
   LogOut,
@@ -16,6 +21,8 @@ import {
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
+import NotificationsPanel from "./NotificationsPanel";
+import Avatar from "./Avatar"; // 👈 shared avatar
 
 // =========================================================
 // CONSTANTS
@@ -32,35 +39,22 @@ const COMMUNITY_LINKS = [
 ];
 
 // =========================================================
-// HELPERS
+// LOGO
 // =========================================================
-const getDisplayName = (p) =>
-  p?.full_name?.trim() || p?.username?.trim() || "User";
-
-const getInitials = (p) =>
-  getDisplayName(p)
-    .split(" ")
-    .slice(0, 2)
-    .map((s) => s[0]?.toUpperCase())
-    .join("");
-
-function Avatar({ person, size = "md" }) {
-  const sizes = {
-    sm: "w-9 h-9 text-xs",
-    md: "w-11 h-11 text-sm",
-    lg: "w-14 h-14 text-base",
-  };
-  return person?.avatar_url ? (
-    <img
-      src={person.avatar_url}
-      alt={getDisplayName(person)}
-      className={`${sizes[size]} rounded-full object-cover border border-gray-700`}
-    />
-  ) : (
-    <div
-      className={`${sizes[size]} rounded-full bg-gradient-to-br from-gray-800 to-gray-900 border border-gray-700 flex items-center justify-center font-bold text-gray-300`}
-    >
-      {getInitials(person)}
+function Logo({ iconSize = "h-9 w-9" }) {
+  return (
+    <div className="flex items-center gap-2.5">
+      <img
+        src="/app.png"
+        alt="CUR.BOOK logo"
+        className={`${iconSize} object-contain rounded-lg shrink-0`}
+        onError={(e) => {
+          e.currentTarget.style.display = "none";
+        }}
+      />
+      <span className="text-lg font-black tracking-tight text-white">
+        CUR<span className="text-yellow-400">.</span>BOOK
+      </span>
     </div>
   );
 }
@@ -75,6 +69,10 @@ export default function Layout() {
   const [user, setUser] = useState(null);
   const [profile, setProfile] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
+
+  // Notification drawer
+  const [showNotifications, setShowNotifications] = useState(false);
+  const [unreadCount, setUnreadCount] = useState(0);
 
   const meRef = useRef(null);
 
@@ -93,10 +91,12 @@ export default function Layout() {
     return () => {
       subscription.unsubscribe();
     };
+    // eslint-disable-next-line
   }, []);
 
   useEffect(() => {
     setMobileMenu(false);
+    setShowNotifications(false);
   }, [location.pathname]);
 
   useEffect(() => {
@@ -105,6 +105,42 @@ export default function Layout() {
       document.body.style.overflow = "";
     };
   }, [mobileMenu]);
+
+  // =========================================================
+  // UNREAD BADGE
+  // =========================================================
+  useEffect(() => {
+    if (!user) return;
+
+    const fetchUnread = async () => {
+      const { count } = await supabase
+        .from("notifications")
+        .select("*", { count: "exact", head: true })
+        .eq("user_id", user.id)
+        .eq("is_read", false);
+      setUnreadCount(count || 0);
+    };
+
+    fetchUnread();
+
+    const channel = supabase
+      .channel(`notifications-badge-${user.id}`)
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "notifications",
+          filter: `user_id=eq.${user.id}`,
+        },
+        () => fetchUnread()
+      )
+      .subscribe();
+
+    return () => {
+      supabase.removeChannel(channel);
+    };
+  }, [user]);
 
   const loadUser = async () => {
     try {
@@ -185,13 +221,14 @@ export default function Layout() {
   // =========================================================
   const SidebarContent = ({ onNavigate }) => (
     <div className="flex h-full flex-col">
-      <div className="flex h-16 items-center border-b border-gray-800 px-6">
+      {/* LOGO */}
+      <div className="flex h-16 items-center border-b border-gray-800 px-5">
         <Link
           to="/home"
           onClick={onNavigate}
-          className="text-lg font-black tracking-tight text-white"
+          className="flex items-center gap-2.5"
         >
-          CUR<span className="text-yellow-400">.</span>BOOK
+          <Logo />
         </Link>
       </div>
 
@@ -291,13 +328,18 @@ export default function Layout() {
           Search
         </Link>
 
-        <Link
-          to="/notifications"
-          onClick={onNavigate}
+        {/* Notifications button */}
+        <button
+          type="button"
+          onClick={() => {
+            setShowNotifications(true);
+            if (onNavigate) onNavigate();
+          }}
           className={`
-            flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition
+            relative w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold
+            transition text-left
             ${
-              isActive("/notifications")
+              showNotifications
                 ? "bg-yellow-400 text-gray-900"
                 : "text-gray-400 hover:bg-gray-800 hover:text-white"
             }
@@ -305,10 +347,19 @@ export default function Layout() {
         >
           <div className="relative shrink-0">
             <Bell size={18} />
-            <span className="absolute -right-1 -top-1 h-2 w-2 rounded-full bg-yellow-400 ring-2 ring-gray-950" />
+            {unreadCount > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-yellow-400 px-1 text-[9px] font-black text-gray-950 ring-2 ring-gray-950">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
           </div>
           Notifications
-        </Link>
+          {unreadCount > 0 && (
+            <span className="ml-auto text-[10px] font-black text-yellow-400">
+              {unreadCount}
+            </span>
+          )}
+        </button>
 
         <Link
           to="/profile"
@@ -322,34 +373,14 @@ export default function Layout() {
             }
           `}
         >
-          {profile?.avatar_url ? (
-            <img
-              src={profile.avatar_url}
-              alt="Profile"
-              className="h-7 w-7 shrink-0 rounded-full object-cover ring-2 ring-yellow-400"
-            />
-          ) : (
-            <div className="flex h-7 w-7 shrink-0 items-center justify-center rounded-full bg-yellow-400 text-gray-900">
-              <User size={14} />
-            </div>
-          )}
+          <Avatar person={profile} size="sm" />
           Profile
         </Link>
       </nav>
 
       <div className="border-t border-gray-800 p-3">
         <div className="mb-2 flex items-center gap-3 rounded-xl bg-gray-900 p-3">
-          {profile?.avatar_url ? (
-            <img
-              src={profile.avatar_url}
-              alt="Profile"
-              className="h-9 w-9 shrink-0 rounded-full object-cover ring-2 ring-yellow-400"
-            />
-          ) : (
-            <div className="flex h-9 w-9 shrink-0 items-center justify-center rounded-full bg-yellow-400 text-gray-900">
-              <User size={16} />
-            </div>
-          )}
+          <Avatar person={profile} size="sm" online />
           <div className="min-w-0 flex-1">
             <p className="truncate text-sm font-bold text-white">
               {profile?.username || profile?.full_name || "User"}
@@ -384,18 +415,38 @@ export default function Layout() {
 
       {/* MOBILE TOP BAR */}
       <header className="sticky top-0 z-30 flex h-16 items-center justify-between border-b border-gray-200 bg-white/90 px-4 backdrop-blur-md lg:hidden">
-        <Link
-          to="/home"
-          className="text-lg font-black tracking-tight text-gray-900"
-        >
-          CUR<span className="text-yellow-500">.</span>BOOK
+        <Link to="/home" className="flex items-center gap-2">
+          <img
+            src="/app.png"
+            alt="CUR.BOOK logo"
+            className="h-9 w-9 object-contain rounded-lg"
+            onError={(e) => (e.currentTarget.style.display = "none")}
+          />
+          <span className="text-lg font-black tracking-tight text-gray-900">
+            CUR<span className="text-yellow-500">.</span>BOOK
+          </span>
         </Link>
-        <button
-          onClick={() => setMobileMenu(true)}
-          className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100 text-gray-700 transition hover:bg-yellow-100"
-        >
-          <Menu size={22} />
-        </button>
+
+        <div className="flex items-center gap-1">
+          <button
+            onClick={() => setShowNotifications(true)}
+            className="relative flex h-10 w-10 items-center justify-center rounded-xl text-gray-700 transition hover:bg-gray-100"
+          >
+            <Bell size={20} />
+            {unreadCount > 0 && (
+              <span className="absolute -right-1 -top-1 flex h-4 min-w-4 items-center justify-center rounded-full bg-yellow-400 px-1 text-[9px] font-black text-gray-950 ring-2 ring-white">
+                {unreadCount > 99 ? "99+" : unreadCount}
+              </span>
+            )}
+          </button>
+
+          <button
+            onClick={() => setMobileMenu(true)}
+            className="flex h-10 w-10 items-center justify-center rounded-xl bg-gray-100 text-gray-700 transition hover:bg-yellow-100"
+          >
+            <Menu size={22} />
+          </button>
+        </div>
       </header>
 
       {/* MOBILE DRAWER */}
@@ -428,6 +479,39 @@ export default function Layout() {
         )}
       </AnimatePresence>
 
+      {/* NOTIFICATIONS OVERLAY DRAWER */}
+      <AnimatePresence>
+        {showNotifications && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setShowNotifications(false)}
+              className="fixed inset-0 z-[75] bg-black/40 backdrop-blur-[2px]"
+            />
+
+            <motion.aside
+              initial={{ x: "-100%" }}
+              animate={{ x: 0 }}
+              exit={{ x: "-100%" }}
+              transition={{ type: "spring", stiffness: 320, damping: 32 }}
+              className="
+                fixed inset-y-0 left-0 z-[80]
+                w-full sm:w-[420px]
+                bg-black border-r border-gray-900
+                flex flex-col
+                shadow-2xl shadow-black/70
+              "
+            >
+              <NotificationsPanel
+                onClose={() => setShowNotifications(false)}
+              />
+            </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
       {/* MAIN CONTENT */}
       <div className="lg:pl-[260px]">
         <main>
@@ -438,8 +522,16 @@ export default function Layout() {
         <footer className="mt-12 bg-gray-900 text-gray-300">
           <div className="mx-auto grid max-w-7xl gap-8 px-4 py-12 sm:px-6 md:grid-cols-3 lg:px-8">
             <div>
-              <Link to="/home" className="text-2xl font-black text-white">
-                cur<span className="text-yellow-400">.</span>book
+              <Link to="/home" className="inline-flex items-center gap-2.5">
+                <img
+                  src="/app.png"
+                  alt="CUR.BOOK logo"
+                  className="h-10 w-10 object-contain rounded-lg"
+                  onError={(e) => (e.currentTarget.style.display = "none")}
+                />
+                <span className="text-2xl font-black tracking-tight text-white">
+                  cur<span className="text-yellow-400">.</span>book
+                </span>
               </Link>
               <p className="mt-4 max-w-sm text-sm leading-6 text-gray-400">
                 A modern community platform where people can discover news,

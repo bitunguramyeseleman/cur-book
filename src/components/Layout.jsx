@@ -10,19 +10,19 @@ import {
   LogOut,
   Menu,
   Search,
-  User,
   X,
   Home,
   Newspaper,
   MessageCircle,
-  Users,
   CircleDot,
   UsersRound,
+  Camera,
 } from "lucide-react";
 import { motion, AnimatePresence } from "framer-motion";
 import { supabase } from "../lib/supabaseClient";
 import NotificationsPanel from "./NotificationsPanel";
-import Avatar from "./Avatar"; // 👈 shared avatar
+import Avatar from "./Avatar";
+import Post from "../pages/Post";
 
 // =========================================================
 // CONSTANTS
@@ -70,9 +70,11 @@ export default function Layout() {
   const [profile, setProfile] = useState(null);
   const [mobileMenu, setMobileMenu] = useState(false);
 
-  // Notification drawer
   const [showNotifications, setShowNotifications] = useState(false);
   const [unreadCount, setUnreadCount] = useState(0);
+
+  // Post overlay
+  const [isPostOpen, setIsPostOpen] = useState(false);
 
   const meRef = useRef(null);
 
@@ -105,6 +107,18 @@ export default function Layout() {
       document.body.style.overflow = "";
     };
   }, [mobileMenu]);
+
+  // lock body scroll while post overlay is open
+  useEffect(() => {
+    if (isPostOpen) {
+      document.body.style.overflow = "hidden";
+    } else if (!mobileMenu) {
+      document.body.style.overflow = "";
+    }
+    return () => {
+      document.body.style.overflow = "";
+    };
+  }, [isPostOpen, mobileMenu]);
 
   // =========================================================
   // UNREAD BADGE
@@ -221,7 +235,6 @@ export default function Layout() {
   // =========================================================
   const SidebarContent = ({ onNavigate }) => (
     <div className="flex h-full flex-col">
-      {/* LOGO */}
       <div className="flex h-16 items-center border-b border-gray-800 px-5">
         <Link
           to="/home"
@@ -266,6 +279,22 @@ export default function Layout() {
             </Link>
           );
         })}
+
+        {/* Post — opens overlay */}
+        <button
+          type="button"
+          onClick={() => {
+            setIsPostOpen(true);
+            if (onNavigate) onNavigate();
+          }}
+          className="relative w-full flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-semibold transition-all duration-200 text-left text-gray-400 hover:bg-gray-800 hover:text-white"
+        >
+          <Camera size={18} className="shrink-0" />
+          <span>Post</span>
+          <span className="ml-auto inline-flex items-center gap-1 rounded-full px-2 py-0.5 text-[9px] font-black bg-yellow-400/10 border border-yellow-400/20 text-yellow-400">
+            NEW
+          </span>
+        </button>
 
         <p className="px-3 pb-2 pt-6 text-[10px] font-black uppercase tracking-widest text-gray-600">
           Community
@@ -328,7 +357,6 @@ export default function Layout() {
           Search
         </Link>
 
-        {/* Notifications button */}
         <button
           type="button"
           onClick={() => {
@@ -429,6 +457,14 @@ export default function Layout() {
 
         <div className="flex items-center gap-1">
           <button
+            onClick={() => setIsPostOpen(true)}
+            title="New post"
+            className="flex h-10 w-10 items-center justify-center rounded-xl bg-yellow-400 text-gray-950 transition hover:bg-yellow-300"
+          >
+            <Camera size={19} />
+          </button>
+
+          <button
             onClick={() => setShowNotifications(true)}
             className="relative flex h-10 w-10 items-center justify-center rounded-xl text-gray-700 transition hover:bg-gray-100"
           >
@@ -479,7 +515,7 @@ export default function Layout() {
         )}
       </AnimatePresence>
 
-      {/* NOTIFICATIONS OVERLAY DRAWER */}
+      {/* NOTIFICATIONS DRAWER */}
       <AnimatePresence>
         {showNotifications && (
           <>
@@ -490,24 +526,50 @@ export default function Layout() {
               onClick={() => setShowNotifications(false)}
               className="fixed inset-0 z-[75] bg-black/40 backdrop-blur-[2px]"
             />
-
             <motion.aside
               initial={{ x: "-100%" }}
               animate={{ x: 0 }}
               exit={{ x: "-100%" }}
               transition={{ type: "spring", stiffness: 320, damping: 32 }}
-              className="
-                fixed inset-y-0 left-0 z-[80]
-                w-full sm:w-[420px]
-                bg-black border-r border-gray-900
-                flex flex-col
-                shadow-2xl shadow-black/70
-              "
+              className="fixed inset-y-0 left-0 z-[80] w-full sm:w-[420px] bg-black border-r border-gray-900 flex flex-col shadow-2xl shadow-black/70"
             >
               <NotificationsPanel
                 onClose={() => setShowNotifications(false)}
               />
             </motion.aside>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* POST OVERLAY MODAL */}
+      <AnimatePresence>
+        {isPostOpen && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setIsPostOpen(false)}
+              className="fixed inset-0 z-[110] bg-black/70 backdrop-blur-md"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 30, scale: 0.96 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 30, scale: 0.96 }}
+              transition={{ type: "spring", stiffness: 300, damping: 28 }}
+              className="fixed inset-0 z-[115] flex items-start justify-center overflow-y-auto p-3 sm:p-6"
+              onClick={() => setIsPostOpen(false)}
+            >
+              <div
+                onClick={(e) => e.stopPropagation()}
+                className="relative w-full max-w-xl rounded-[28px] border border-gray-800 bg-gray-950 shadow-2xl shadow-black/70 my-4 sm:my-8"
+              >
+                <Post
+                  onClose={() => setIsPostOpen(false)}
+                  onPosted={() => setIsPostOpen(false)}
+                />
+              </div>
+            </motion.div>
           </>
         )}
       </AnimatePresence>
@@ -542,15 +604,25 @@ export default function Layout() {
             <div>
               <h3 className="font-black text-white">Platform</h3>
               <div className="mt-4 flex flex-col gap-3 text-sm">
-                {NAV_LINKS.map(({ to, label }) => (
-                  <Link
-                    key={to}
-                    to={to}
-                    className="transition hover:text-yellow-400"
-                  >
-                    {label}
-                  </Link>
-                ))}
+                <Link
+                  to="/home"
+                  className="transition hover:text-yellow-400"
+                >
+                  Home
+                </Link>
+                <Link
+                  to="/news"
+                  className="transition hover:text-yellow-400"
+                >
+                  News
+                </Link>
+                <button
+                  type="button"
+                  onClick={() => setIsPostOpen(true)}
+                  className="text-left transition hover:text-yellow-400"
+                >
+                  Post
+                </button>
               </div>
             </div>
 

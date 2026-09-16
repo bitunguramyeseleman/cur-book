@@ -5,7 +5,7 @@ import {
   Smile, Paperclip, Check, CheckCheck, MessageCircle, Users, X,
   Loader2, ChevronDown, Crown, Image as ImageIcon, BellOff, User,
   ChevronRight, AtSign, Calendar, Sparkles, Reply, Pencil, Forward,
-  Trash2, Plus,
+  Trash2, Plus, Mic,
 } from "lucide-react";
 import { supabase } from "../lib/supabaseClient";
 
@@ -41,17 +41,19 @@ const isSameDay = (a, b) => {
   return new Date(a).toDateString() === new Date(b).toDateString();
 };
 
+const formatDuration = (sec) => {
+  const m = Math.floor(sec / 60);
+  const s = sec % 60;
+  return `${m}:${s.toString().padStart(2, "0")}`;
+};
+
 const EMOJIS = ["😀","😂","🥰","😎","🤔","👍","🔥","❤️","🎉","😢","😡","🙏","💯","✨","😴","🤝"];
-
-// Hover reaction bar (Instagram-style)
 const HOVER_REACTIONS = ["❤️", "😂", "😮", "😢", "🙏", "👍"];
-
-// Full emoji picker
 const REACTION_PICKER = [
   "❤️","😂","😮","😢","🙏","👍","🔥","💯","🎉","✨",
   "😀","🥰","😎","🤔","😡","😴","🤝","💔","👏","🤣",
   "😍","🥳","😅","🤗","😇","🤩","😭","😱","🤯","🥺",
-  "💪","🙌","✨","🌟","⚡","💥","💫","🎯","🏆","🥇",
+  "💪","🙌","🌟","⚡","💥","💫","🎯","🏆","🥇","💐",
 ];
 
 // =========================================================
@@ -193,7 +195,6 @@ function MessageActionsPopover({
       onClick={(e) => e.stopPropagation()}
     >
       <div className="bg-gray-950 border border-gray-800 rounded-2xl shadow-2xl overflow-hidden min-w-[160px]">
-        {/* Quick reactions row */}
         <div className="flex items-center gap-0.5 px-2 py-1.5 border-b border-gray-800/80">
           {HOVER_REACTIONS.map((emoji) => (
             <button
@@ -213,7 +214,6 @@ function MessageActionsPopover({
           </button>
         </div>
 
-        {/* Actions */}
         <button
           onClick={onReply}
           className="w-full flex items-center gap-3 px-3 py-2.5 text-xs font-semibold text-gray-200 hover:bg-gray-800 transition"
@@ -328,46 +328,51 @@ export default function Community() {
   const [autoScroll, setAutoScroll] = useState(true);
   const [rtStatus, setRtStatus] = useState("CONNECTING");
 
-  // ---- Filter tabs ----
   const [activeTab, setActiveTab] = useState("all");
 
-  // ---- Online ----
   const [onlineUserIds, setOnlineUserIds] = useState(new Set());
   const onlineChannelRef = useRef(null);
 
-  // ---- Groups list ----
   const [myGroups, setMyGroups] = useState([]);
   const [loadingGroups, setLoadingGroups] = useState(false);
 
-  // ---- Inline Group Chat ----
   const [selectedGroup, setSelectedGroup] = useState(null);
   const [groupMessages, setGroupMessages] = useState([]);
   const [groupMembers, setGroupMembers] = useState([]);
   const [groupProfiles, setGroupProfiles] = useState({});
   const [loadingGroupMessages, setLoadingGroupMessages] = useState(false);
 
-  // ---- Profile drawer + panel ----
   const [showProfileDrawer, setShowProfileDrawer] = useState(false);
   const [showProfilePanel, setShowProfilePanel] = useState(true);
 
-  // ---- Media modal ----
   const [showMediaModal, setShowMediaModal] = useState(false);
-
-  // ---- Accordion ----
   const [openSection, setOpenSection] = useState(null);
 
-  // ---- Message actions ----
   const [actionMessage, setActionMessage] = useState(null);
   const [replyTo, setReplyTo] = useState(null);
   const [editingMessage, setEditingMessage] = useState(null);
   const [editText, setEditText] = useState("");
   const [forwardMessage, setForwardMessage] = useState(null);
 
-  // ---- Reactions ----
   const [reactions, setReactions] = useState({});
-  const [pickerMessage, setPickerMessage] = useState(null); // message ID for the emoji picker
+  const [pickerMessage, setPickerMessage] = useState(null);
 
-  // ---- Typing refs ----
+  // ---- Delete modal ----
+  const [deleteTarget, setDeleteTarget] = useState(null);
+
+  // ---- Global typing (sidebar) ----
+  const [globalTypingIds, setGlobalTypingIds] = useState(new Set());
+  const globalTypingChannelRef = useRef(null);
+
+  // ---- Voice recording ----
+  const [recording, setRecording] = useState(false);
+  const [recordingDuration, setRecordingDuration] = useState(0);
+  const [uploading, setUploading] = useState(false);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+  const recordingTimerRef = useRef(null);
+  const fileInputRef = useRef(null);
+
   const [typingChannelReady, setTypingChannelReady] = useState(false);
   const isTypingRef = useRef(false);
   const typingStopRef = useRef(null);
@@ -387,6 +392,7 @@ export default function Community() {
     initialize();
     return () => {
       if (typingStopRef.current) clearTimeout(typingStopRef.current);
+      if (recordingTimerRef.current) clearInterval(recordingTimerRef.current);
       if (presenceChannelRef.current) {
         supabase.removeChannel(presenceChannelRef.current);
         presenceChannelRef.current = null;
@@ -395,6 +401,11 @@ export default function Community() {
         try { onlineChannelRef.current.untrack(); } catch {}
         supabase.removeChannel(onlineChannelRef.current);
         onlineChannelRef.current = null;
+      }
+      if (globalTypingChannelRef.current) {
+        try { globalTypingChannelRef.current.untrack(); } catch {}
+        supabase.removeChannel(globalTypingChannelRef.current);
+        globalTypingChannelRef.current = null;
       }
     };
     // eslint-disable-next-line
@@ -427,7 +438,6 @@ export default function Community() {
     }
   };
 
-  // Reset panels when switching chats
   useEffect(() => {
     setShowProfileDrawer(false);
     setShowProfilePanel(true);
@@ -438,9 +448,9 @@ export default function Community() {
     setEditingMessage(null);
     setForwardMessage(null);
     setPickerMessage(null);
+    setDeleteTarget(null);
   }, [selectedUser?.id, selectedGroup?.id]);
 
-  // Close drawer on resize to desktop
   useEffect(() => {
     const handleResize = () => {
       if (window.innerWidth >= 1280) {
@@ -451,7 +461,6 @@ export default function Community() {
     return () => window.removeEventListener("resize", handleResize);
   }, []);
 
-  // Close action popover on outside click
   useEffect(() => {
     const handler = () => setActionMessage(null);
     document.addEventListener("click", handler);
@@ -561,9 +570,6 @@ export default function Community() {
     }
   }, []);
 
-  // =========================================================
-  // REACTIONS LOADER
-  // =========================================================
   const loadReactions = useCallback(async (messageIds) => {
     if (!messageIds.length) return;
     const { data, error } = await supabase
@@ -615,6 +621,49 @@ export default function Community() {
       try { channel.untrack(); } catch {}
       supabase.removeChannel(channel);
       onlineChannelRef.current = null;
+    };
+  }, [user]);
+
+  // =========================================================
+  // GLOBAL TYPING (sidebar)
+  // =========================================================
+  useEffect(() => {
+    if (!user) return;
+
+    const channel = supabase.channel("global-typing", {
+      config: { presence: { key: user.id } },
+    });
+    globalTypingChannelRef.current = channel;
+
+    const syncTyping = () => {
+      const state = channel.presenceState();
+      const ids = new Set();
+      Object.entries(state).forEach(([uid, presences]) => {
+        if (uid === user.id) return;
+        if (presences.some((p) => p.typing === true)) {
+          ids.add(uid);
+        }
+      });
+      setGlobalTypingIds(ids);
+    };
+
+    channel
+      .on("presence", { event: "sync" }, syncTyping)
+      .on("presence", { event: "join" }, syncTyping)
+      .on("presence", { event: "leave" }, syncTyping);
+
+    channel.subscribe(async (status) => {
+      if (status === "SUBSCRIBED") {
+        await channel.track({ typing: false });
+        syncTyping();
+      }
+    });
+
+    return () => {
+      try { channel.untrack(); } catch {}
+      supabase.removeChannel(channel);
+      globalTypingChannelRef.current = null;
+      setGlobalTypingIds(new Set());
     };
   }, [user]);
 
@@ -693,9 +742,6 @@ export default function Community() {
     }
   };
 
-  // =========================================================
-  // OPEN GROUP CHAT
-  // =========================================================
   const openGroupChat = async (group) => {
     try {
       stopTypingNow();
@@ -729,7 +775,7 @@ export default function Community() {
     try {
       const { data, error: e } = await supabase
         .from("messages")
-        .select("id, sender_id, receiver_id, group_id, message, created_at, is_read, reply_to, edited_at, deleted_at")
+        .select("id, sender_id, receiver_id, group_id, message, created_at, is_read, reply_to, edited_at, deleted_at, deleted_for, attachment_url, attachment_type, attachment_name, attachment_size")
         .is("group_id", null)
         .or(`and(sender_id.eq.${user.id},receiver_id.eq.${otherUserId}),and(sender_id.eq.${otherUserId},receiver_id.eq.${user.id})`)
         .order("created_at", { ascending: true });
@@ -751,7 +797,7 @@ export default function Community() {
     try {
       const { data, error: e } = await supabase
         .from("messages")
-        .select("id, sender_id, group_id, message, created_at, reply_to, edited_at, deleted_at")
+        .select("id, sender_id, group_id, message, created_at, reply_to, edited_at, deleted_at, deleted_for, attachment_url, attachment_type, attachment_name, attachment_size")
         .eq("group_id", groupId)
         .order("created_at", { ascending: true });
       if (e) throw e;
@@ -845,7 +891,11 @@ export default function Community() {
     setAutoScroll(nearBottom);
   };
 
-  const activeMessagesLength = (selectedGroup ? groupMessages : messages).length;
+  const activeMessagesRaw = selectedGroup ? groupMessages : messages;
+  const visibleMessages = activeMessagesRaw.filter(
+    (m) => !(m.deleted_for || []).includes(user?.id)
+  );
+  const activeLoading = selectedGroup ? loadingGroupMessages : loadingMessages;
 
   useEffect(() => {
     if (!autoScroll) return;
@@ -853,10 +903,10 @@ export default function Community() {
       messagesEndRef.current?.scrollIntoView({ behavior: "smooth", block: "end" });
     });
     // eslint-disable-next-line
-  }, [activeMessagesLength, otherUserTyping, autoScroll]);
+  }, [visibleMessages.length, otherUserTyping, autoScroll]);
 
   // =========================================================
-  // REALTIME — DM MESSAGES + REACTIONS
+  // REALTIME
   // =========================================================
   useEffect(() => {
     if (!user) return;
@@ -936,9 +986,6 @@ export default function Community() {
     };
   }, [user]);
 
-  // =========================================================
-  // REALTIME — GROUP MESSAGES
-  // =========================================================
   useEffect(() => {
     if (!user || !selectedGroup) return;
 
@@ -980,9 +1027,6 @@ export default function Community() {
     // eslint-disable-next-line
   }, [user, selectedGroup?.id]);
 
-  // =========================================================
-  // REALTIME — REACTIONS
-  // =========================================================
   useEffect(() => {
     if (!user) return;
 
@@ -996,7 +1040,6 @@ export default function Community() {
           setReactions((prev) => {
             const list = prev[r.message_id] || [];
             if (list.some((x) => x.id === r.id)) return prev;
-            // Remove any previous reaction from same user (1 emoji per user)
             const filtered = list.filter((x) => x.user_id !== r.user_id);
             return { ...prev, [r.message_id]: [...filtered, r] };
           });
@@ -1021,7 +1064,7 @@ export default function Community() {
   }, [user]);
 
   // =========================================================
-  // TYPING PRESENCE
+  // TYPING PRESENCE (per-DM)
   // =========================================================
   useEffect(() => {
     if (!user || !selectedUser || selectedGroup) {
@@ -1075,18 +1118,22 @@ export default function Community() {
 
   const updateTypingStatus = useCallback(
     async (typing) => {
-      const channel = presenceChannelRef.current;
-      if (!channel || !typingChannelReady) return;
-      try {
-        await channel.track({ typing, at: Date.now() });
-      } catch (e) { /* best-effort */ }
+      const dmChannel = presenceChannelRef.current;
+      if (dmChannel && typingChannelReady) {
+        try {
+          await dmChannel.track({ typing, at: Date.now() });
+        } catch (e) { /* noop */ }
+      }
+      const globalChannel = globalTypingChannelRef.current;
+      if (globalChannel) {
+        try {
+          await globalChannel.track({ typing });
+        } catch (e) { /* noop */ }
+      }
     },
     [typingChannelReady]
   );
 
-  // =========================================================
-  // TOGGLE PROFILE VIEW
-  // =========================================================
   const toggleProfileView = () => {
     if (window.innerWidth >= 1280) {
       setShowProfilePanel((v) => !v);
@@ -1111,12 +1158,19 @@ export default function Community() {
 
     list.forEach((msg) => {
       if (msg.deleted_at) return;
+      if (msg.attachment_url) {
+        items.push({
+          id: `${msg.id}-attach`,
+          type: msg.attachment_type === "image" ? "image" : "file",
+          url: msg.attachment_url,
+          message: msg,
+        });
+      }
       const text = msg.message || "";
       const images = text.match(imageRegex) || [];
       images.forEach((url) => {
         items.push({ id: `${msg.id}-img-${url}`, type: "image", url, message: msg });
       });
-
       const urls = text.match(urlRegex) || [];
       urls.forEach((url) => {
         if (!imageRegex.test(url)) {
@@ -1131,8 +1185,6 @@ export default function Community() {
   // =========================================================
   // MESSAGE ACTIONS
   // =========================================================
-
-  // ---- TOGGLE REACTION (1 emoji per user) ----
   const toggleReaction = async (messageId, emoji) => {
     if (!user) return;
 
@@ -1140,9 +1192,7 @@ export default function Community() {
       (r) => r.user_id === user.id
     );
 
-    // Same emoji → REMOVE
     if (myExisting && myExisting.emoji === emoji) {
-      // Optimistic remove
       setReactions((prev) => ({
         ...prev,
         [messageId]: (prev[messageId] || []).filter((r) => r.id !== myExisting.id),
@@ -1156,9 +1206,7 @@ export default function Community() {
       return;
     }
 
-    // Different emoji → REPLACE (delete old, insert new)
     if (myExisting) {
-      // Optimistic replace
       const tempId = `temp-${Date.now()}`;
       const optimistic = {
         id: tempId,
@@ -1174,20 +1222,17 @@ export default function Community() {
         ],
       }));
 
-      // Delete old
       const { error: delErr } = await supabase
         .from("message_reactions")
         .delete()
         .eq("id", myExisting.id);
       if (delErr) {
         console.error(delErr);
-        // revert
         await loadReactions([messageId]);
         setActionMessage(null);
         return;
       }
 
-      // Insert new
       const { data, error: insErr } = await supabase
         .from("message_reactions")
         .insert({ message_id: messageId, user_id: user.id, emoji })
@@ -1212,7 +1257,6 @@ export default function Community() {
       return;
     }
 
-    // No existing → ADD
     const tempId = `temp-${Date.now()}`;
     const optimistic = {
       id: tempId,
@@ -1247,23 +1291,61 @@ export default function Community() {
     setActionMessage(null);
   };
 
-  const deleteMessage = async (message) => {
-    const now = new Date().toISOString();
+  // =========================================================
+  // DELETE MESSAGE (for me vs everyone)
+  // =========================================================
+  const deleteMessageForMe = async (message) => {
+    if (!user) return;
+    const currentDeletedFor = message.deleted_for || [];
+    const newDeletedFor = [...currentDeletedFor, user.id];
+
     const { error } = await supabase
       .from("messages")
-      .update({ deleted_at: now, message: "" })
+      .update({ deleted_for: newDeletedFor })
       .eq("id", message.id);
+
     if (error) { console.error(error); return; }
 
     if (selectedGroup) {
       setGroupMessages((prev) =>
-        prev.map((m) => (m.id === message.id ? { ...m, deleted_at: now, message: "" } : m))
+        prev.map((m) => (m.id === message.id ? { ...m, deleted_for: newDeletedFor } : m))
       );
     } else {
       setMessages((prev) =>
-        prev.map((m) => (m.id === message.id ? { ...m, deleted_at: now, message: "" } : m))
+        prev.map((m) => (m.id === message.id ? { ...m, deleted_for: newDeletedFor } : m))
       );
     }
+    setDeleteTarget(null);
+    setActionMessage(null);
+  };
+
+  const deleteMessageForEveryone = async (message) => {
+    const now = new Date().toISOString();
+    const { error } = await supabase
+      .from("messages")
+      .update({ deleted_at: now, message: "", attachment_url: null })
+      .eq("id", message.id);
+
+    if (error) { console.error(error); return; }
+
+    if (selectedGroup) {
+      setGroupMessages((prev) =>
+        prev.map((m) =>
+          m.id === message.id
+            ? { ...m, deleted_at: now, message: "", attachment_url: null }
+            : m
+        )
+      );
+    } else {
+      setMessages((prev) =>
+        prev.map((m) =>
+          m.id === message.id
+            ? { ...m, deleted_at: now, message: "", attachment_url: null }
+            : m
+        )
+      );
+    }
+    setDeleteTarget(null);
     setActionMessage(null);
   };
 
@@ -1329,12 +1411,236 @@ export default function Community() {
   };
 
   // =========================================================
+  // FILE UPLOAD
+  // =========================================================
+  const handleFileSelect = async (e) => {
+    const file = e.target.files?.[0];
+    if (!file || !user) return;
+
+    if (file.size > 50 * 1024 * 1024) {
+      setError("File must be smaller than 50MB.");
+      if (fileInputRef.current) fileInputRef.current.value = "";
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setError("");
+
+      const ext = file.name.split(".").pop();
+      const filePath = `${user.id}/${Date.now()}-${crypto.randomUUID()}.${ext}`;
+
+      const { error: uploadError } = await supabase.storage
+        .from("chat-files")
+        .upload(filePath, file);
+
+      if (uploadError) throw uploadError;
+
+      const { data: urlData } = supabase.storage
+        .from("chat-files")
+        .getPublicUrl(filePath);
+
+      let attachmentType = "file";
+      if (file.type.startsWith("image/")) attachmentType = "image";
+      else if (file.type.startsWith("video/")) attachmentType = "video";
+      else if (file.type.startsWith("audio/")) attachmentType = "audio";
+
+      await sendAttachment({
+        url: urlData.publicUrl,
+        type: attachmentType,
+        name: file.name,
+        size: file.size,
+      });
+    } catch (err) {
+      console.error("File upload failed:", err);
+      setError("File could not be uploaded.");
+    } finally {
+      setUploading(false);
+      if (fileInputRef.current) fileInputRef.current.value = "";
+    }
+  };
+
+  // =========================================================
+  // SEND ATTACHMENT (file + voice)
+  // =========================================================
+  const sendAttachment = async ({ url, type, name, size }) => {
+    if (!user) return;
+    const isGroup = !!selectedGroup;
+    if (!isGroup && !selectedUser) return;
+
+    const tempId = `temp-${Date.now()}`;
+    const optimistic = {
+      id: tempId,
+      sender_id: user.id,
+      group_id: isGroup ? selectedGroup.id : null,
+      receiver_id: isGroup ? null : selectedUser.id,
+      message: name || "",
+      created_at: new Date().toISOString(),
+      is_read: false,
+      attachment_url: url,
+      attachment_type: type,
+      attachment_name: name,
+      attachment_size: size,
+      _optimistic: true,
+    };
+
+    if (isGroup) {
+      setGroupMessages((prev) => [...prev, optimistic]);
+    } else {
+      setMessages((prev) => [...prev, optimistic]);
+      setLastMessages((prev) => ({ ...prev, [selectedUser.id]: optimistic }));
+    }
+    setAutoScroll(true);
+
+    try {
+      let insertPayload;
+      if (isGroup) {
+        insertPayload = {
+          sender_id: user.id,
+          receiver_id: null,
+          group_id: selectedGroup.id,
+          message: name || "",
+          is_read: false,
+          attachment_url: url,
+          attachment_type: type,
+          attachment_name: name,
+          attachment_size: size,
+        };
+      } else {
+        const conversation =
+          selectedConversation || (await getOrCreateConversation(selectedUser.id));
+        if (!conversation) throw new Error("Conversation could not be created.");
+        if (!selectedConversation) setSelectedConversation(conversation);
+
+        insertPayload = {
+          sender_id: user.id,
+          receiver_id: selectedUser.id,
+          group_id: null,
+          message: name || "",
+          is_read: false,
+          attachment_url: url,
+          attachment_type: type,
+          attachment_name: name,
+          attachment_size: size,
+        };
+      }
+
+      const { data, error: sendError } = await supabase
+        .from("messages")
+        .insert(insertPayload)
+        .select()
+        .single();
+
+      if (sendError) throw sendError;
+
+      if (isGroup) {
+        setGroupMessages((prev) =>
+          prev.map((m) => (m.id === tempId ? data : m))
+        );
+      } else {
+        setMessages((prev) => prev.map((m) => (m.id === tempId ? data : m)));
+        setLastMessages((prev) => ({ ...prev, [selectedUser.id]: data }));
+      }
+    } catch (err) {
+      console.error("[attachment send] failed:", err);
+      if (isGroup) {
+        setGroupMessages((prev) => prev.filter((m) => m.id !== tempId));
+      } else {
+        setMessages((prev) => prev.filter((m) => m.id !== tempId));
+      }
+      setError("Attachment could not be sent.");
+    }
+  };
+
+  // =========================================================
+  // VOICE RECORDING
+  // =========================================================
+  const startRecording = async () => {
+    try {
+      setError("");
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (event) => {
+        if (event.data.size > 0) audioChunksRef.current.push(event.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        stream.getTracks().forEach((track) => track.stop());
+
+        const blob = new Blob(audioChunksRef.current, { type: "audio/webm" });
+        audioChunksRef.current = [];
+
+        if (blob.size < 1000) return;
+
+        try {
+          setUploading(true);
+          const filePath = `${user.id}/voice-${Date.now()}-${crypto.randomUUID()}.webm`;
+          const { error: uploadError } = await supabase.storage
+            .from("chat-files")
+            .upload(filePath, blob, { contentType: "audio/webm" });
+
+          if (uploadError) throw uploadError;
+
+          const { data: urlData } = supabase.storage
+            .from("chat-files")
+            .getPublicUrl(filePath);
+
+          await sendAttachment({
+            url: urlData.publicUrl,
+            type: "voice",
+            name: "Voice message",
+            size: blob.size,
+          });
+        } catch (err) {
+          console.error("Voice upload error:", err);
+          setError("Voice message could not be sent.");
+        } finally {
+          setUploading(false);
+        }
+      };
+
+      mediaRecorder.start();
+      setRecording(true);
+      setRecordingDuration(0);
+
+      recordingTimerRef.current = setInterval(() => {
+        setRecordingDuration((d) => d + 1);
+      }, 1000);
+    } catch (err) {
+      console.error("Microphone error:", err);
+      setError("Microphone access is required.");
+    }
+  };
+
+  const stopRecording = (cancel = false) => {
+    const recorder = mediaRecorderRef.current;
+    if (!recorder || recorder.state === "inactive") return;
+
+    if (cancel) {
+      audioChunksRef.current = [];
+      recorder.onstop = () => {
+        try { recorder.stream?.getTracks().forEach((t) => t.stop()); } catch {}
+      };
+    }
+
+    recorder.stop();
+    setRecording(false);
+    setRecordingDuration(0);
+    if (recordingTimerRef.current) {
+      clearInterval(recordingTimerRef.current);
+      recordingTimerRef.current = null;
+    }
+  };
+
+  // =========================================================
   // INPUT
   // =========================================================
   const handleMessageChange = (e) => {
     const value = e.target.value;
     setMessageText(value);
-    if (!selectedUser || selectedGroup) return;
 
     if (typingStopRef.current) clearTimeout(typingStopRef.current);
 
@@ -1370,7 +1676,7 @@ export default function Community() {
   };
 
   // =========================================================
-  // SEND
+  // SEND TEXT
   // =========================================================
   const sendMessage = async (e) => {
     e?.preventDefault();
@@ -1423,7 +1729,6 @@ export default function Community() {
 
     try {
       let insertPayload;
-
       if (isGroup) {
         insertPayload = {
           sender_id: user.id,
@@ -1536,8 +1841,6 @@ export default function Community() {
   };
 
   const hasActiveChat = !!selectedUser || !!selectedGroup;
-  const activeMessages = selectedGroup ? groupMessages : messages;
-  const activeLoading = selectedGroup ? loadingGroupMessages : loadingMessages;
 
   // =========================================================
   // PANEL BODY
@@ -1779,7 +2082,6 @@ export default function Community() {
   // =========================================================
   return (
     <div className="min-h-[calc(100vh-80px)] bg-gray-950 text-white">
-      {/* ERROR TOAST */}
       <AnimatePresence>
         {error && (
           <motion.div
@@ -1993,6 +2295,7 @@ export default function Community() {
                     const unread = unreadCounts[person.id] || 0;
                     const last = lastMessages[person.id];
                     const isOnline = onlineUserIds.has(person.id);
+                    const isTyping = globalTypingIds.has(person.id);
 
                     return (
                       <motion.button
@@ -2032,13 +2335,21 @@ export default function Community() {
                               )}
                             </div>
                           </div>
-                          <p className={`text-[11px] truncate mt-1 ${isSelected ? "text-gray-700" : "text-gray-500"}`}>
-                            {isOnline && !last
-                              ? "Online now"
-                              : last
-                              ? `${last.sender_id === user.id ? "You: " : ""}${last.message}`
-                              : "Tap to start chatting"}
-                          </p>
+
+                          {isTyping ? (
+                            <div className={`flex items-center gap-1.5 mt-1 ${isSelected ? "text-gray-800" : "text-green-400"}`}>
+                              <span className="text-[11px] font-semibold">typing</span>
+                              <TypingDots />
+                            </div>
+                          ) : (
+                            <p className={`text-[11px] truncate mt-1 ${isSelected ? "text-gray-700" : "text-gray-500"}`}>
+                              {isOnline && !last
+                                ? "Online now"
+                                : last
+                                ? `${last.sender_id === user.id ? "You: " : ""}${last.message}`
+                                : "Tap to start chatting"}
+                            </p>
+                          )}
                         </div>
                       </motion.button>
                     );
@@ -2084,7 +2395,6 @@ export default function Community() {
               </div>
             ) : (
               <>
-                {/* HEADER */}
                 <header className="h-[76px] shrink-0 border-b border-gray-800 px-3 sm:px-6 flex items-center justify-between bg-gray-900/95 backdrop-blur">
                   <div className="flex items-center gap-2 min-w-0">
                     <button
@@ -2099,10 +2409,8 @@ export default function Community() {
                       onClick={toggleProfileView}
                       className="
                         group flex items-center gap-3 min-w-0 text-left rounded-xl px-2 py-1.5
-                        cursor-pointer
-                        transition-all duration-200
-                        hover:bg-yellow-400/10
-                        hover:ring-1 hover:ring-yellow-400/30
+                        cursor-pointer transition-all duration-200
+                        hover:bg-yellow-400/10 hover:ring-1 hover:ring-yellow-400/30
                         active:scale-[0.98]
                       "
                     >
@@ -2180,7 +2488,6 @@ export default function Community() {
                   </div>
                 </header>
 
-                {/* MESSAGES */}
                 <div
                   ref={messagesContainerRef}
                   onScroll={handleScroll}
@@ -2194,7 +2501,7 @@ export default function Community() {
                         </div>
                       ))}
                     </div>
-                  ) : activeMessages.length === 0 ? (
+                  ) : visibleMessages.length === 0 ? (
                     <div className="h-full flex items-center justify-center">
                       <div className="text-center">
                         <div className="w-16 h-16 mx-auto rounded-2xl bg-gray-800 flex items-center justify-center mb-4">
@@ -2211,10 +2518,10 @@ export default function Community() {
                   ) : (
                     <div className="max-w-4xl mx-auto">
                       <div className="space-y-1">
-                        {activeMessages.map((message, index) => {
+                        {visibleMessages.map((message, index) => {
                           const mine = message.sender_id === user.id;
-                          const prev = activeMessages[index - 1];
-                          const next = activeMessages[index + 1];
+                          const prev = visibleMessages[index - 1];
+                          const next = visibleMessages[index + 1];
 
                           const showDateSeparator = !prev || !isSameDay(prev.created_at, message.created_at);
                           const isFirstInGroup =
@@ -2235,7 +2542,7 @@ export default function Community() {
                             : `rounded-2xl ${isFirstInGroup ? "rounded-tl-2xl" : "rounded-tl-md"} ${isLastInGroup ? "rounded-bl-md" : "rounded-bl-2xl"}`;
 
                           const repliedMessage = message.reply_to
-                            ? activeMessages.find((m) => m.id === message.reply_to)
+                            ? visibleMessages.find((m) => m.id === message.reply_to)
                             : null;
                           const repliedSender = repliedMessage
                             ? (selectedGroup
@@ -2250,7 +2557,7 @@ export default function Community() {
                             acc[r.emoji] = (acc[r.emoji] || 0) + 1;
                             return acc;
                           }, {});
-                          const myReaction = msgReactions.find((r) => r.user_id === user.id);
+                          const hasReactions = Object.keys(groupedReactions).length > 0;
 
                           const isActionOpen = actionMessage?.id === message.id;
 
@@ -2307,7 +2614,7 @@ export default function Community() {
                                     <div className="relative">
                                       <div
                                         className={`
-                                          px-4 py-2.5 shadow-sm transition-opacity
+                                          px-3 py-1.5 shadow-sm transition-opacity
                                           ${bubbleRadius}
                                           ${
                                             message.deleted_at
@@ -2319,28 +2626,103 @@ export default function Community() {
                                           ${message._optimistic ? "opacity-70" : "opacity-100"}
                                         `}
                                       >
-                                        <p className="text-sm leading-6 whitespace-pre-wrap break-words">
-                                          {message.deleted_at
-                                            ? "This message was deleted"
-                                            : message.message}
-                                        </p>
+                                        {/* ATTACHMENTS */}
+                                        {message.attachment_url && !message.deleted_at && (
+                                          <div className={message.message ? "mb-1.5" : ""}>
+                                            {message.attachment_type === "image" && (
+                                              <a
+                                                href={message.attachment_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className="block"
+                                              >
+                                                <img
+                                                  src={message.attachment_url}
+                                                  alt={message.attachment_name || "image"}
+                                                  className="max-w-[240px] rounded-lg"
+                                                />
+                                              </a>
+                                            )}
+                                            {message.attachment_type === "video" && (
+                                              <video
+                                                controls
+                                                src={message.attachment_url}
+                                                className="max-w-[240px] rounded-lg"
+                                              />
+                                            )}
+                                            {message.attachment_type === "audio" && (
+                                              <audio
+                                                controls
+                                                src={message.attachment_url}
+                                                className="max-w-[240px]"
+                                              />
+                                            )}
+                                            {message.attachment_type === "voice" && (
+                                              <div className="flex items-center gap-2 min-w-[180px]">
+                                                <div className={`w-8 h-8 rounded-full flex items-center justify-center shrink-0 ${mine ? "bg-black/20" : "bg-gray-900"}`}>
+                                                  <Mic size={14} />
+                                                </div>
+                                                <audio
+                                                  controls
+                                                  src={message.attachment_url}
+                                                  className="max-w-[200px] h-8"
+                                                />
+                                              </div>
+                                            )}
+                                            {message.attachment_type === "file" && (
+                                              <a
+                                                href={message.attachment_url}
+                                                target="_blank"
+                                                rel="noopener noreferrer"
+                                                className={`
+                                                  flex items-center gap-3 p-2 rounded-lg transition
+                                                  ${mine ? "bg-black/10 hover:bg-black/20" : "bg-gray-900/50 hover:bg-gray-900"}
+                                                `}
+                                              >
+                                                <div className={`w-9 h-9 rounded-lg flex items-center justify-center shrink-0 ${mine ? "bg-black/20" : "bg-gray-800"}`}>
+                                                  <Paperclip size={16} />
+                                                </div>
+                                                <div className="min-w-0 flex-1">
+                                                  <p className="text-xs font-bold truncate">
+                                                    {message.attachment_name || "File"}
+                                                  </p>
+                                                  {message.attachment_size && (
+                                                    <p className={`text-[10px] ${mine ? "text-gray-800" : "text-gray-500"}`}>
+                                                      {(message.attachment_size / 1024).toFixed(0)} KB
+                                                    </p>
+                                                  )}
+                                                </div>
+                                              </a>
+                                            )}
+                                          </div>
+                                        )}
+
+                                        {/* TEXT */}
+                                        {message.deleted_at ? (
+                                          <p className="text-sm leading-5 italic">
+                                            This message was deleted
+                                          </p>
+                                        ) : (
+                                          message.message && (
+                                            <p className="text-sm leading-5 whitespace-pre-wrap break-words">
+                                              {message.message}
+                                            </p>
+                                          )
+                                        )}
+
                                         {message.edited_at && !message.deleted_at && (
-                                          <p
-                                            className={`text-[9px] mt-0.5 ${
-                                              mine ? "text-gray-700" : "text-gray-500"
-                                            }`}
-                                          >
+                                          <p className={`text-[9px] mt-0.5 ${mine ? "text-gray-700" : "text-gray-500"}`}>
                                             edited
                                           </p>
                                         )}
                                       </div>
 
-                                      {/* ---- INSTAGRAM-STYLE REACTION PILLS ---- */}
-                                      {Object.keys(groupedReactions).length > 0 && (
+                                      {/* REACTIONS — no "+" button, spaced from bubble */}
+                                      {hasReactions && (
                                         <div
                                           className={`
-                                            absolute -bottom-2.5 ${mine ? "right-2" : "left-2"}
-                                            flex items-center gap-0.5 z-10
+                                            absolute -bottom-3 ${mine ? "right-2" : "left-2"}
+                                            flex items-center gap-1 z-10
                                           `}
                                         >
                                           {Object.entries(groupedReactions).map(([emoji, count]) => {
@@ -2371,25 +2753,6 @@ export default function Community() {
                                               </button>
                                             );
                                           })}
-
-                                          {/* Plus button to open picker */}
-                                          <button
-                                            onClick={(e) => {
-                                              e.stopPropagation();
-                                              setPickerMessage(message.id);
-                                            }}
-                                            className="
-                                              flex items-center justify-center
-                                              rounded-full px-1.5 py-0.5
-                                              text-[10px] font-bold
-                                              bg-gray-900/90 border border-gray-700
-                                              text-gray-400 hover:text-yellow-400 hover:border-yellow-400/50
-                                              shadow-sm backdrop-blur-sm transition
-                                            "
-                                            title="Add reaction"
-                                          >
-                                            <Plus size={9} strokeWidth={3} />
-                                          </button>
                                         </div>
                                       )}
 
@@ -2422,7 +2785,10 @@ export default function Community() {
                                               setForwardMessage(message);
                                               setActionMessage(null);
                                             }}
-                                            onDelete={() => deleteMessage(message)}
+                                            onDelete={() => {
+                                              setDeleteTarget(message);
+                                              setActionMessage(null);
+                                            }}
                                             onReact={(emoji) => toggleReaction(message.id, emoji)}
                                             onOpenPicker={() => {
                                               setPickerMessage(message.id);
@@ -2434,13 +2800,13 @@ export default function Community() {
                                     </div>
 
                                     {isLastInGroup && (
-                                      <div className={`flex items-center gap-1.5 mt-1.5 ${mine ? "justify-end" : "justify-start"} ${Object.keys(groupedReactions).length > 0 ? "mt-3" : ""}`}>
+                                      <div className={`flex items-center gap-1.5 ${mine ? "justify-end" : "justify-start"} ${hasReactions ? "mt-4" : "mt-1.5"}`}>
                                         <span className="text-[9px] text-gray-600">
                                           {formatTime(message.created_at)}
                                         </span>
                                         {mine && !message._optimistic && !selectedGroup && !message.deleted_at && (
                                           message.is_read ? (
-                                            <CheckCheck size={13} className="text-yellow-500" />
+                                            <CheckCheck size={13} className="text-green-500" />
                                           ) : (
                                             <Check size={13} className="text-gray-500" />
                                           )
@@ -2499,7 +2865,7 @@ export default function Community() {
                   )}
 
                   <AnimatePresence>
-                    {!autoScroll && activeMessages.length > 0 && (
+                    {!autoScroll && visibleMessages.length > 0 && (
                       <motion.button
                         initial={{ opacity: 0, y: 10 }}
                         animate={{ opacity: 1, y: 0 }}
@@ -2516,7 +2882,6 @@ export default function Community() {
                   </AnimatePresence>
                 </div>
 
-                {/* COMPOSER */}
                 <div className="shrink-0 border-t border-gray-800 p-3 sm:p-4 bg-gray-900">
                   <AnimatePresence>
                     {replyTo && (
@@ -2532,9 +2897,7 @@ export default function Community() {
                             {replyTo.sender_id === user.id
                               ? "yourself"
                               : selectedGroup
-                              ? getDisplayName(
-                                  groupProfiles[replyTo.sender_id] || {}
-                                )
+                              ? getDisplayName(groupProfiles[replyTo.sender_id] || {})
                               : getDisplayName(selectedUser)}
                           </p>
                           <p className="text-xs text-gray-400 truncate">
@@ -2575,52 +2938,114 @@ export default function Community() {
                     </AnimatePresence>
 
                     <div className="flex items-end gap-2 bg-gray-950 border border-gray-800 rounded-2xl p-2 focus-within:border-yellow-400/60 transition">
+                      <input
+                        type="file"
+                        ref={fileInputRef}
+                        onChange={handleFileSelect}
+                        className="hidden"
+                      />
+
                       <button
                         type="button"
-                        className="hidden sm:flex w-10 h-10 rounded-xl items-center justify-center text-gray-600 hover:text-yellow-400 hover:bg-gray-900 transition"
+                        onClick={() => fileInputRef.current?.click()}
+                        disabled={uploading}
+                        className="flex w-10 h-10 rounded-xl items-center justify-center text-gray-600 hover:text-yellow-400 hover:bg-gray-900 transition disabled:opacity-40"
+                        title="Attach file"
                       >
-                        <Paperclip size={19} />
+                        {uploading ? (
+                          <Loader2 size={19} className="animate-spin" />
+                        ) : (
+                          <Paperclip size={19} />
+                        )}
                       </button>
+
                       <button
                         type="button"
                         onClick={() => setShowEmoji((s) => !s)}
-                        className={`hidden sm:flex w-10 h-10 rounded-xl items-center justify-center transition ${showEmoji ? "text-yellow-400 bg-gray-900" : "text-gray-600 hover:text-yellow-400 hover:bg-gray-900"}`}
+                        className={`hidden sm:flex w-10 h-10 rounded-xl items-center justify-center transition ${
+                          showEmoji
+                            ? "text-yellow-400 bg-gray-900"
+                            : "text-gray-600 hover:text-yellow-400 hover:bg-gray-900"
+                        }`}
                       >
                         <Smile size={19} />
                       </button>
 
-                      <textarea
-                        ref={inputRef}
-                        value={messageText}
-                        onChange={handleMessageChange}
-                        onBlur={stopTypingNow}
-                        onKeyDown={(e) => {
-                          if (e.key === "Enter" && !e.shiftKey) {
-                            e.preventDefault();
-                            sendMessage();
+                      {recording ? (
+                        <div className="flex-1 flex items-center gap-3 py-2.5 px-2">
+                          <motion.div
+                            animate={{ opacity: [1, 0.3, 1] }}
+                            transition={{ duration: 1.2, repeat: Infinity }}
+                            className="w-2.5 h-2.5 rounded-full bg-red-500"
+                          />
+                          <span className="text-sm text-red-400 font-bold">
+                            Recording… {formatDuration(recordingDuration)}
+                          </span>
+                        </div>
+                      ) : (
+                        <textarea
+                          ref={inputRef}
+                          value={messageText}
+                          onChange={handleMessageChange}
+                          onBlur={stopTypingNow}
+                          onKeyDown={(e) => {
+                            if (e.key === "Enter" && !e.shiftKey) {
+                              e.preventDefault();
+                              sendMessage();
+                            }
+                          }}
+                          rows={1}
+                          placeholder={
+                            selectedGroup
+                              ? `Message ${selectedGroup.name}...`
+                              : "Write a message..."
                           }
-                        }}
-                        rows={1}
-                        placeholder={
-                          selectedGroup
-                            ? `Message ${selectedGroup.name}...`
-                            : "Write a message..."
-                        }
-                        className="flex-1 resize-none bg-transparent outline-none text-sm text-white placeholder:text-gray-600 py-2.5 px-2 max-h-32"
-                      />
+                          className="flex-1 resize-none bg-transparent outline-none text-sm text-white placeholder:text-gray-600 py-2.5 px-2 max-h-32"
+                        />
+                      )}
 
-                      <motion.button
-                        whileTap={{ scale: 0.92 }}
-                        type="submit"
-                        disabled={!messageText.trim() || sending}
-                        className="w-11 h-11 shrink-0 rounded-xl bg-yellow-400 text-gray-950 flex items-center justify-center disabled:opacity-30 disabled:cursor-not-allowed hover:bg-yellow-300 transition"
-                      >
-                        {sending ? (
-                          <Loader2 size={19} className="animate-spin" />
-                        ) : (
-                          <Send size={19} fill="currentColor" />
-                        )}
-                      </motion.button>
+                      {messageText.trim() ? (
+                        <motion.button
+                          whileTap={{ scale: 0.92 }}
+                          type="submit"
+                          disabled={sending}
+                          className="w-11 h-11 shrink-0 rounded-xl bg-yellow-400 text-gray-950 flex items-center justify-center disabled:opacity-30 hover:bg-yellow-300 transition"
+                        >
+                          {sending ? (
+                            <Loader2 size={19} className="animate-spin" />
+                          ) : (
+                            <Send size={19} fill="currentColor" />
+                          )}
+                        </motion.button>
+                      ) : recording ? (
+                        <div className="flex items-center gap-1 shrink-0">
+                          <button
+                            type="button"
+                            onClick={() => stopRecording(true)}
+                            className="w-11 h-11 rounded-xl bg-gray-800 text-red-400 flex items-center justify-center hover:bg-red-500/20 transition"
+                          >
+                            <X size={18} />
+                          </button>
+                          <button
+                            type="button"
+                            onClick={() => stopRecording(false)}
+                            className="w-11 h-11 rounded-xl bg-yellow-400 text-gray-950 flex items-center justify-center hover:bg-yellow-300 transition"
+                          >
+                            <Check size={18} strokeWidth={3} />
+                          </button>
+                        </div>
+                      ) : (
+                        <motion.button
+                          whileTap={{ scale: 0.92 }}
+                          type="button"
+                          onClick={startRecording}
+                          disabled={uploading}
+                          className="w-11 h-11 shrink-0 rounded-xl bg-yellow-400 text-gray-950 flex items-center justify-center hover:bg-yellow-300 transition disabled:opacity-40"
+                          title="Record voice message"
+                        >
+                          <Mic size={19} />
+                        </motion.button>
+                      )}
                     </div>
 
                     <p className="hidden sm:block text-[9px] text-gray-700 text-center mt-2">
@@ -2705,7 +3130,75 @@ export default function Community() {
         )}
       </AnimatePresence>
 
-      {/* ================= EMOJI REACTION PICKER MODAL ================= */}
+      {/* ================= DELETE MODAL ================= */}
+      <AnimatePresence>
+        {deleteTarget && (
+          <>
+            <motion.div
+              initial={{ opacity: 0 }}
+              animate={{ opacity: 1 }}
+              exit={{ opacity: 0 }}
+              onClick={() => setDeleteTarget(null)}
+              className="fixed inset-0 z-[160] bg-black/70 backdrop-blur-sm"
+            />
+            <motion.div
+              initial={{ opacity: 0, y: 20, scale: 0.98 }}
+              animate={{ opacity: 1, y: 0, scale: 1 }}
+              exit={{ opacity: 0, y: 20, scale: 0.98 }}
+              className="fixed top-1/2 left-1/2 -translate-x-1/2 -translate-y-1/2 z-[170] w-[calc(100%-32px)] max-w-sm bg-gray-950 border border-gray-800 rounded-3xl shadow-2xl overflow-hidden"
+            >
+              <div className="p-5">
+                <h3 className="font-black text-white text-lg">Delete message?</h3>
+                <p className="text-xs text-gray-500 mt-1">
+                  Choose who to delete this message for.
+                </p>
+              </div>
+              <div className="border-t border-gray-800 p-3 space-y-2">
+                <button
+                  onClick={() => deleteMessageForMe(deleteTarget)}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-gray-900 text-left transition"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-gray-800 flex items-center justify-center">
+                    <User size={16} className="text-gray-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-white">Delete for me</p>
+                    <p className="text-[11px] text-gray-500">
+                      Only removes from your view
+                    </p>
+                  </div>
+                </button>
+                <button
+                  onClick={() => deleteMessageForEveryone(deleteTarget)}
+                  className="w-full flex items-center gap-3 px-4 py-3 rounded-xl hover:bg-red-500/10 text-left transition"
+                >
+                  <div className="w-9 h-9 rounded-lg bg-red-500/20 flex items-center justify-center">
+                    <Trash2 size={16} className="text-red-400" />
+                  </div>
+                  <div>
+                    <p className="text-sm font-bold text-red-400">
+                      Delete for everyone
+                    </p>
+                    <p className="text-[11px] text-gray-500">
+                      Removes for you and the recipient
+                    </p>
+                  </div>
+                </button>
+              </div>
+              <div className="border-t border-gray-800 p-3">
+                <button
+                  onClick={() => setDeleteTarget(null)}
+                  className="w-full rounded-xl bg-gray-900 border border-gray-800 py-3 text-sm font-bold text-gray-300 hover:bg-gray-800"
+                >
+                  Cancel
+                </button>
+              </div>
+            </motion.div>
+          </>
+        )}
+      </AnimatePresence>
+
+      {/* ================= REACTION PICKER ================= */}
       <ReactionPickerModal
         open={!!pickerMessage}
         onClose={() => setPickerMessage(null)}
@@ -2834,7 +3327,7 @@ export default function Community() {
         )}
       </AnimatePresence>
 
-      {/* ================= MEDIA & FILES MODAL ================= */}
+      {/* ================= MEDIA MODAL ================= */}
       <AnimatePresence>
         {showMediaModal && hasActiveChat && (
           <>
@@ -2904,7 +3397,7 @@ export default function Community() {
                               <Paperclip size={16} className="text-yellow-400" />
                             </div>
                             <p className="text-[10px] text-gray-500 truncate w-full">
-                              {new URL(item.url).hostname}
+                              File
                             </p>
                           </div>
                         )}
